@@ -51,10 +51,14 @@ class PolicyEvaluationService:
         self._policy_service.ensure_default_policy()
         context_data = self._repository.message_context(message_id)
         context: PolicyContext = context_data["policy_context"]
+        message = context_data["message"]
+        dataset_id = UUID(str(message["dataset_id"])) if message.get("dataset_id") else None
         rate_count = self._sender_rate(context.sender_ref, moment)
         if rate_count != context.rate_count:
             context = replace(context, rate_count=rate_count)
-        policies = self._policy_service.active_snapshots(now=moment)
+        policies = self._policy_service.active_snapshots(
+            now=moment, dataset_id=dataset_id
+        )
         default_policy = self._policy_service.get_default_snapshot()
         outcome = evaluate_policies(
             context,
@@ -63,7 +67,6 @@ class PolicyEvaluationService:
             now=moment,
             default_actions=self._default_actions,
         )
-        message = context_data["message"]
         stored = self._repository.save_evaluation(
             context=context,
             outcome=outcome,

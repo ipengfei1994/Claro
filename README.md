@@ -30,7 +30,7 @@ Claro 是面向 SLG 场景的本地优先内容安全与风险治理平台。当
 | 反馈与审计 | 误杀/漏判与错误案例、原始模型结果对照、追加式审计日志、全链路 Trace |
 | 治理事件流 | Outbox Pattern，6 类治理 Topic，真实 Kafka 发布验证（137 条事件 0 失败） |
 | 治理 UI | 六个页面：总览、Policy Center、Moderation Workbench、Governance Decisions、Enforcement Center、Feedback & Audit；真实浏览器渲染验证 |
-| 自动化 | **216 个单元测试通过，22 个真实集成测试通过**；Ruff 通过；6/6 UI 页面冒烟通过 |
+| 自动化 | **216 个单元测试通过，25 个真实集成测试通过**；Ruff 通过；6/6 UI 页面冒烟通过 |
 
 Hive 阻塞原因：当前 Windows 环境未安装原生 Hive、Hadoop 或 Beeline。不得将该部分标记为运行验证。语义检测器当前为显式不可用占位；LLM 顾问层默认关闭，未对真实端点验证。
 

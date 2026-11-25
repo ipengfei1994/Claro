@@ -34,6 +34,7 @@ from claro.domain.enums import (
     FeedbackType,
     GovernanceDecisionStatus,
     MessageDisplayStatus,
+    ModerationAction,
     OutboxStatus,
     RiskSeverity,
 )
@@ -450,6 +451,203 @@ class GovernanceRepository:
             session.flush()
             return _decision_dict(row)
 
+    def record_decision_override(
+        self,
+        decision_id: UUID,
+        *,
+        actor_ref: str,
+        actor_role: str,
+        reason: str,
+        status: str,
+        action: str | None,
+    ) -> dict[str, Any]:
+        """Record a human decision override as a reviewable moderation event.
+
+        A status-only override would leave the governance trace without a human
+        review record. This path always links the override to a moderation case
+        and review, while retaining the original decision and risk identifiers.
+        """
+        if status not in {item.value for item in GovernanceDecisionStatus}:
+            raise GovernanceValidationError(f"unknown decision status: {status}")
+        if action is not None and action not in {item.value for item in DecisionAction}:
+            raise GovernanceValidationError(f"unknown decision action: {action}")
+        _require_text(actor_ref, "actor_ref", 191)
+        _require_text(actor_role, "actor_role", 32)
+        _require_text(reason, "reason", 2_000)
+        with session_scope(self._sessions) as session:
+            decision = session.get(PolicyDecision, decision_id)
+            if decision is None:
+                raise GovernanceNotFoundError(f"decision not found: {decision_id}")
+            before = _decision_dict(decision)
+            explanation = dict(decision.explanation or {})
+            evidence = dict(explanation.get("evidence") or {})
+            valid_levels = {item.value for item in RiskSeverity}
+            system_level = str(
+                evidence.get("risk_level")
+                or (
+                    decision.reason_codes[1]
+                    if decision.reason_codes and len(decision.reason_codes) > 1
+                    else RiskSeverity.MEDIUM.value
+                )
+            )
+            if system_level not in valid_levels:
+                system_level = RiskSeverity.MEDIUM.value
+            final_action = str(action or decision.action)
+            now = datetime.now(UTC)
+
+            case = session.scalar(
+                select(ModerationCase).where(ModerationCase.message_id == decision.message_id)
+            )
+            if case is None:
+                previous_status = None
+                case = ModerationCase(
+                    message_id=decision.message_id,
+                    status=CaseStatus.FINALIZED.value,
+                    priority=decision.priority,
+                    decision_id=decision.id,
+                    risk_result_id=decision.risk_result_id,
+                    final_action=final_action,
+                    final_level=system_level,
+                    resolution=ModerationAction.OVERRIDE.value,
+                    risk_snapshot={
+                        "risk_score": float(decision.risk_score),
+                        "risk_level": system_level,
+                        "confidence": float(decision.confidence),
+                        "suggested_action": str(decision.action),
+                        "risk_result_id": (
+                            str(decision.risk_result_id) if decision.risk_result_id else None
+                        ),
+                    },
+                    opened_at=now,
+                    closed_at=now,
+                    is_synthetic=decision.is_synthetic,
+                )
+                session.add(case)
+                session.flush()
+                session.add(
+                    CaseEvent(
+                        case_id=case.id,
+                        event_type="case.opened",
+                        actor_type="user",
+                        actor_ref=actor_ref,
+                        from_status=None,
+                        to_status=case.status,
+                        note="case opened for decision override",
+                    )
+                )
+            else:
+                previous_status = str(case.status)
+                case.decision_id = decision.id
+                if case.risk_result_id is None:
+                    case.risk_result_id = decision.risk_result_id
+                case.status = CaseStatus.FINALIZED.value
+                case.final_action = final_action
+                case.final_level = system_level
+                case.resolution = ModerationAction.OVERRIDE.value
+                case.closed_at = now
+                case.updated_at = now
+                case.lock_version += 1
+                session.add(
+                    CaseEvent(
+                        case_id=case.id,
+                        event_type="moderation.override_recorded",
+                        actor_type="user",
+                        actor_ref=actor_ref,
+                        from_status=previous_status,
+                        to_status=case.status,
+                        note=reason,
+                    )
+                )
+
+            review = ModerationReview(
+                case_id=case.id,
+                decision_id=decision.id,
+                reviewer_ref=actor_ref,
+                reviewer_role=actor_role,
+                action=ModerationAction.OVERRIDE.value,
+                reason=reason,
+                final_action=final_action,
+                final_level=system_level,
+                final_category=case.final_category,
+                from_status=previous_status,
+                to_status=case.status,
+                system_action=str(decision.action),
+                system_level=system_level,
+                system_category=None,
+                system_confidence=decision.confidence,
+                is_synthetic=case.is_synthetic,
+            )
+            session.add(review)
+
+            decision.decision_status = status
+            decision.decided_by = actor_ref
+            decision.decision_reason = reason
+            explanation["human_review"] = {
+                "reviewer": actor_ref,
+                "role": actor_role,
+                "action": ModerationAction.OVERRIDE.value,
+                "reason": reason,
+                "final_action": final_action,
+                "final_level": system_level,
+                "review_id": str(review.id),
+                "case_id": str(case.id),
+            }
+            decision.explanation = explanation
+            session.flush()
+
+            after = _decision_dict(decision) | {
+                "case_id": str(case.id),
+                "review_id": str(review.id),
+                "final_action": final_action,
+            }
+            _audit(
+                session,
+                entity_type="policy_decision",
+                entity_id=decision.id,
+                action="decision.overridden",
+                actor_ref=actor_ref,
+                actor_role=actor_role,
+                reason=reason,
+                before=before,
+                after=after,
+            )
+            _audit(
+                session,
+                entity_type="moderation_case",
+                entity_id=case.id,
+                action="case.override_recorded",
+                actor_ref=actor_ref,
+                actor_role=actor_role,
+                reason=reason,
+                after=_case_dict(case) | {"review_id": str(review.id)},
+            )
+            _enqueue(
+                session,
+                OutboxDraft(
+                    event_type="game.governance.decision.overridden.v1",
+                    topic=self._topics.decision,
+                    payload={
+                        "synthetic": decision.is_synthetic,
+                        "decision_id": str(decision.id),
+                        "case_id": str(case.id),
+                        "review_id": str(review.id),
+                        "message_id": str(decision.message_id),
+                        "risk_result_id": (
+                            str(decision.risk_result_id) if decision.risk_result_id else None
+                        ),
+                        "system_action": str(decision.action),
+                        "final_action": final_action,
+                        "status": status,
+                        "reviewer_ref": actor_ref,
+                        "reviewer_role": actor_role,
+                        "reason": reason,
+                    },
+                    dedupe_key=f"decision.override:{review.id}",
+                    headers={"event_version": "1", "aggregate": "policy_decision"},
+                ),
+            )
+            return after | {"created": True}
+
     def list_cases(
         self,
         *,
@@ -844,6 +1042,26 @@ class GovernanceRepository:
             case = session.scalar(
                 select(ModerationCase).where(ModerationCase.message_id == message.id)
             )
+            review = (
+                session.scalar(
+                    select(ModerationReview)
+                    .where(ModerationReview.case_id == case.id)
+                    .order_by(ModerationReview.created_at.desc())
+                )
+                if case is not None
+                else None
+            )
+            trace = {
+                "message_id": str(message.id),
+                "decision_id": str(decision.id),
+                "case_id": str(case.id) if case is not None else None,
+                "review_id": str(review.id) if review is not None else None,
+                "policy_id": str(decision.policy_id),
+                "policy_version": _policy_version(session, decision),
+                "risk_result_id": (
+                    str(decision.risk_result_id) if decision.risk_result_id else None
+                ),
+            }
             allowed_actions = {str(decision.action)}
             if case is not None and case.final_action is not None:
                 allowed_actions.add(str(case.final_action))
@@ -892,6 +1110,7 @@ class GovernanceRepository:
                     "synthetic": True,
                     "simulated": True,
                     "scope_ref": scope_ref,
+                    "trace": trace,
                 },
                 target_type=plan.target_type,
                 server_ref=message.server_ref,
@@ -925,11 +1144,13 @@ class GovernanceRepository:
                         topic=self._topics.enforcement,
                         payload={
                             "synthetic": True,
+                            "simulated": True,
+                            "simulated_only": True,
                             "enforcement_id": str(row.id),
-                            "decision_id": str(decision.id),
                             "action": action,
                             "target_ref": target_ref,
                             "reason": reason,
+                            **trace,
                         },
                         dedupe_key=f"enforcement.failed:{row.id}",
                         headers={"event_version": "1", "aggregate": "enforcement_action"},
@@ -967,16 +1188,15 @@ class GovernanceRepository:
                     payload={
                         "synthetic": True,
                         "simulated": True,
+                        "simulated_only": True,
                         "enforcement_id": str(row.id),
-                        "decision_id": str(decision.id),
-                        "message_id": str(message.id),
                         "action": action,
                         "target_ref": target_ref,
                         "target_type": plan.target_type,
                         "duration_seconds": plan.duration_seconds,
                         "expires_at": (plan.expires_at.isoformat() if plan.expires_at else None),
                         "executed_at": now.isoformat(),
-                        "simulated_only": True,
+                        **trace,
                     },
                     dedupe_key=f"enforcement.executed:{row.id}",
                     headers={"event_version": "1", "aggregate": "enforcement_action"},
@@ -1049,6 +1269,7 @@ class GovernanceRepository:
                 )
             now = datetime.now(UTC)
             before = _enforcement_dict(row)
+            trace = dict((row.details or {}).get("trace") or {})
             row.status = EnforcementStatus.RELEASED.value
             row.released_at = now
             row.release_reason = reason
@@ -1082,12 +1303,14 @@ class GovernanceRepository:
                     topic=self._topics.enforcement,
                     payload={
                         "synthetic": True,
+                        "simulated": True,
+                        "simulated_only": True,
                         "enforcement_id": str(row.id),
-                        "decision_id": str(row.decision_id),
                         "action": row.action_type,
                         "target_ref": row.target_ref,
                         "reason": reason,
                         "released_at": now.isoformat(),
+                        **trace,
                     },
                     dedupe_key=f"enforcement.released:{row.id}",
                     headers={"event_version": "1", "aggregate": "enforcement_action"},
@@ -1111,6 +1334,8 @@ class GovernanceRepository:
                 .with_for_update(skip_locked=True)
             ).all()
             for row in rows:
+                before = _enforcement_dict(row)
+                trace = dict((row.details or {}).get("trace") or {})
                 row.status = EnforcementStatus.EXPIRED.value
                 if row.target_type != "message":
                     states = session.scalars(
@@ -1122,6 +1347,17 @@ class GovernanceRepository:
                         state.mute_until = None
                         state.ban_until = None
                         state.updated_at = now
+                _audit(
+                    session,
+                    entity_type="enforcement_action",
+                    entity_id=row.id,
+                    action="enforcement.expired",
+                    actor_ref="governance-engine",
+                    actor_role="system",
+                    reason="simulated enforcement expired",
+                    before=before,
+                    after=_enforcement_dict(row),
+                )
                 _enqueue(
                     session,
                     OutboxDraft(
@@ -1129,11 +1365,13 @@ class GovernanceRepository:
                         topic=self._topics.enforcement,
                         payload={
                             "synthetic": True,
+                            "simulated": True,
+                            "simulated_only": True,
                             "enforcement_id": str(row.id),
-                            "decision_id": str(row.decision_id),
                             "action": row.action_type,
                             "target_ref": row.target_ref,
                             "expired_at": now.isoformat(),
+                            **trace,
                         },
                         dedupe_key=f"enforcement.expired:{row.id}",
                         headers={"event_version": "1", "aggregate": "enforcement_action"},
@@ -1541,6 +1779,7 @@ class GovernanceRepository:
                         AuditEvent.entity_id == message_id,
                         AuditEvent.entity_id.in_([item.id for item in decisions]),
                         AuditEvent.entity_id.in_([item.id for item in evaluations]),
+                        AuditEvent.entity_id.in_([item.id for item in enforcements]),
                         AuditEvent.entity_id == (case.id if case is not None else uuid4()),
                     )
                 )

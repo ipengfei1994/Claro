@@ -179,6 +179,7 @@ class GovernanceDecisionService:
         reason: str,
         action: str | None = None,
         status: str = GovernanceDecisionStatus.OVERRIDDEN.value,
+        actor_role: str = "admin",
     ) -> dict[str, Any]:
         if not isinstance(reason, str) or len(reason.strip()) < 3:
             raise GovernanceValidationError(
@@ -188,11 +189,15 @@ class GovernanceDecisionService:
             raise GovernanceValidationError(f"unknown decision status: {status}")
         if action is not None and action not in {item.value for item in DecisionAction}:
             raise GovernanceValidationError(f"unknown decision action: {action}")
-        existing = self._repository.get_decision(decision_id)
-        if existing is None:
-            raise GovernanceNotFoundError(f"decision not found: {decision_id}")
-        result = self._repository.update_decision_status(
-            decision_id, status=status, actor_ref=actor_ref, reason=reason
+        if actor_role not in {"moderator", "senior_moderator", "admin", "auditor"}:
+            raise GovernanceValidationError(f"unknown actor role: {actor_role}")
+        result = self._repository.record_decision_override(
+            decision_id,
+            actor_ref=actor_ref,
+            actor_role=actor_role,
+            reason=reason.strip(),
+            status=status,
+            action=action,
         )
         return {**result, "requested_action": action}
 

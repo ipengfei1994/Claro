@@ -81,7 +81,8 @@ def _render_feedback(service: Any, actor: dict[str, str]) -> None:
         message_id = st.text_input("消息 ID (message_id)", placeholder="UUID")
         c1, c2 = st.columns(2)
         decision_id = c1.text_input("决策 ID（可选）", placeholder="UUID")
-        feedback_type = c2.selectbox("反馈类型", _FEEDBACK_TYPES, key="fa_feedback_type")
+        review_id = c2.text_input("审核记录 ID（可选）", placeholder="UUID")
+        feedback_type = st.selectbox("反馈类型", _FEEDBACK_TYPES, key="fa_feedback_type")
         difference_reason = st.text_area("差异原因（必填）", height=80, key="fa_diff_reason")
         confirm = st.checkbox("我确认提交该反馈")
         if st.form_submit_button("提交反馈", type="primary"):
@@ -98,6 +99,7 @@ def _render_feedback(service: Any, actor: dict[str, str]) -> None:
                     difference_reason=difference_reason.strip(),
                     reviewer_ref=actor["ref"],
                     decision_id=UUID(decision_id.strip()) if decision_id.strip() else None,
+                    review_id=UUID(review_id.strip()) if review_id.strip() else None,
                 )
                 label = "（错误案例）" if result.get("is_error_case") else ""
                 st.success(f"反馈已提交{label}")
@@ -116,6 +118,7 @@ def _render_feedback(service: Any, actor: dict[str, str]) -> None:
                 "时间": fmt_dt(item["created_at"]),
                 "类型": FEEDBACK_LABELS.get(item["feedback_type"], item["feedback_type"]),
                 "审核人": item["reviewer_ref"],
+                "审核记录": str(item.get("review_id") or "")[:8],
                 "原始风险分": fmt_score((item.get("original_risk") or {}).get("risk_score")),
                 "策略版本": item.get("policy_version"),
                 "模型版本": item.get("model_version"),

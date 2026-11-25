@@ -90,6 +90,12 @@ def _render_records(service: Any) -> None:
                 "对象": item["target_ref"],
                 "服务器": item["server_ref"] or "—",
                 "状态": status_text(item["status"]),
+                "决策": str(item.get("decision_id") or "")[:8],
+                "审核工单": str(item.get("case_id") or "")[:8],
+                "审核记录": str(
+                    ((item.get("details") or {}).get("trace") or {}).get("review_id") or ""
+                )[:8],
+                "策略版本": ((item.get("details") or {}).get("trace") or {}).get("policy_version"),
                 "时长": fmt_duration(item["duration_seconds"]),
                 "到期": fmt_dt(item["expires_at"]),
                 "模拟": "是" if item["simulated"] else "否",

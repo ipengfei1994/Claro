@@ -131,7 +131,7 @@ Executed / Verified。
 | 套件 | 结果 |
 |---|---|
 | 单元测试 | 216 passed |
-| 集成测试 | 22 passed, 1 Alembic DeprecationWarning |
+| 集成测试 | 25 passed, 1 Alembic DeprecationWarning |
 | Ruff | All checks passed |
 | 浏览器 UI 冒烟 | 6/6 pages |
 | CLI 治理命令 | seed / evaluate / expire / dispatch / status 均通过 |
@@ -139,6 +139,15 @@ Executed / Verified。
 最终失败用例：0。
 
 测试过程中曾有 15 个单元测试失败与 10 个集成/UI 失败，均为测试数据构造问题或真实代码缺陷；已逐项修复并重跑通过。修复清单见 `PHASE_04_TEST_REPORT.md` 第 4 节。
+
+## 13.1 关键验收标准复验
+
+Verified / Executed。
+
+- 策略有效性：同一消息在策略变更后生成新的 evaluation 与 decision，最终动作按新策略改变；数据集限定策略在评估时按消息 `dataset_id` 生效。
+- 审核闭环：决策覆盖同步写入 moderation case/review，误杀与漏判反馈保留 `review_id`、`decision_id`、`original_prediction`、`original_risk` 与策略版本。
+- 处置追溯：所有模拟处罚事件与 `details.trace` 携带 message/decision/case/review/policy/policy_version/risk_result 关联；到期写审计并纳入 `governance_trace()`。
+- 证据：`tests/integration/test_governance_postgres.py` 新增 3 项验收测试，完整 PostgreSQL 集成测试 8/8 通过。
 
 ## 14. 当前已知问题
 
@@ -169,7 +178,7 @@ cd D:\桌面\Claro
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/unit -q
-.\.venv\Scripts\python.exe -m pytest tests/integration -q -o addopts=""
+.\.venv\Scripts\python.exe -m pytest tests/integration -q -m integration
 .\.venv\Scripts\python.exe -m ruff check src tests
 ```
 

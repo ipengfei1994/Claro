@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from claro.bootstrap import AppContainer
 from claro.data_access.models import (
@@ -122,6 +123,198 @@ def test_evaluation_and_decision_persist_with_ids_and_outbox(
     assert duplicate_decision["id"] == decision["id"]
     with full_container.session_factory() as session:
         assert _count(session, PolicyEvaluation, message_id=message_id) == 1
+
+
+@pytest.mark.integration
+def test_policy_change_changes_decision_for_same_message(
+    full_container: AppContainer, governance_data: dict
+) -> None:
+    """A policy edit must produce a new evaluation and a different real decision."""
+    message_id = UUID(str(governance_data["message_id"]))
+    first_evaluation = full_container.policy_evaluation_service.evaluate_message(message_id)
+    first_decision = full_container.governance_decision_service.make_decision(first_evaluation)
+    original_action = str(first_decision["action"])
+    target_action = (
+        DecisionAction.ALLOW.value
+        if original_action != DecisionAction.ALLOW.value
+        else DecisionAction.BLOCK.value
+    )
+
+    created = full_container.policy_service.create_policy(
+        policy_key=f"{governance_data['policy_prefix']}switch",
+        name="集成测试策略切换",
+        description="synthetic acceptance policy switch",
+        policy_type=PolicyType.KEYWORD.value,
+        target_scope={"players": [governance_data["sender_ref"]]},
+        conditions={"field": "content", "op": "contains", "value": "免费"},
+        action=target_action,
+        priority=1_000,
+        emergency=True,
+        created_by="it.reviewer",
+        change_reason="acceptance: policy change must alter decision",
+    )
+
+    second_evaluation = full_container.policy_evaluation_service.evaluate_message(message_id)
+    second_decision = full_container.governance_decision_service.make_decision(second_evaluation)
+
+    assert second_evaluation["created"] is True
+    assert second_evaluation["id"] != first_evaluation["id"]
+    assert second_decision["id"] != first_decision["id"]
+    assert second_decision["action"] == target_action
+    assert second_decision["action"] != original_action
+    assert second_evaluation["selected_policy_id"] == str(created["id"])
+    assert (
+        second_decision["explanation"]["policy"]["selected_policy_id"] == str(created["id"])
+    )
+
+
+@pytest.mark.integration
+def test_decision_override_creates_review_linked_to_original_risk(
+    full_container: AppContainer, governance_data: dict
+) -> None:
+    """A human override must be reviewable and trace back to the original risk."""
+    message_id = UUID(str(governance_data["message_id"]))
+    evaluation = full_container.policy_evaluation_service.evaluate_message(message_id)
+    decision = full_container.governance_decision_service.make_decision(evaluation)
+    decision_id = UUID(str(decision["id"]))
+
+    overridden = full_container.governance_decision_service.override_decision(
+        decision_id,
+        actor_ref="it.admin",
+        actor_role="admin",
+        reason="human corrected the automated decision",
+        action=DecisionAction.WARN.value,
+    )
+    review_id = UUID(str(overridden["review_id"]))
+    assert overridden["decision_status"] == GovernanceDecisionStatus.OVERRIDDEN.value
+    assert overridden["case_id"]
+    assert overridden["final_action"] == DecisionAction.WARN.value
+
+    trace = full_container.feedback_audit_service.trace(message_id)
+    assert any(item["id"] == str(review_id) for item in trace["reviews"])
+    assert trace["case"]["status"] == "finalized"
+
+    feedback = full_container.feedback_audit_service.submit_feedback(
+        message_id=message_id,
+        decision_id=decision_id,
+        review_id=review_id,
+        feedback_type=FeedbackType.FALSE_POSITIVE.value,
+        difference_reason="benign content misclassified",
+        reviewer_ref="it.admin",
+    )
+    assert feedback["review_id"] == str(review_id)
+    assert feedback["original_prediction"]["risk_result_id"] == str(
+        governance_data["risk_result_id"]
+    )
+    assert feedback["original_risk"]["risk_score"] is not None
+    assert feedback["policy_version"] is not None
+
+    with full_container.session_factory() as session:
+        stored = session.get(GovernanceFeedback, UUID(str(feedback["id"])))
+        assert stored is not None
+        assert stored.review_id == review_id
+        assert stored.decision_id == decision_id
+
+
+@pytest.mark.integration
+def test_enforcement_events_carry_full_governance_trace(
+    full_container: AppContainer, governance_data: dict
+) -> None:
+    """Every simulated enforcement must carry decision/policy/review/risk links."""
+    message_id = UUID(str(governance_data["message_id"]))
+    prefix = governance_data["policy_prefix"]
+    full_container.policy_service.create_policy(
+        policy_key=f"{prefix}trace-review",
+        name="集成测试追溯审核策略",
+        description="synthetic traceability review policy",
+        policy_type=PolicyType.KEYWORD.value,
+        target_scope={"players": [governance_data["sender_ref"]]},
+        conditions={"field": "content", "op": "contains", "value": "免费"},
+        action=DecisionAction.REVIEW.value,
+        priority=1_000,
+        emergency=True,
+        created_by="it.reviewer",
+        change_reason="force reviewed enforcement path",
+    )
+    evaluation = full_container.policy_evaluation_service.evaluate_message(message_id)
+    decision = full_container.governance_decision_service.make_decision(evaluation)
+    decision_id = UUID(str(decision["id"]))
+    case_id = UUID(str(decision["case_id"]))
+
+    moderation = full_container.moderation_service
+    moderation.claim(
+        case_id,
+        reviewer_ref="it.reviewer.alice",
+        reviewer_role="moderator",
+    )
+    reviewed = moderation.submit_review(
+        case_id,
+        reviewer_ref="it.reviewer.alice",
+        reviewer_role="moderator",
+        action="override",
+        reason="reviewed and reduced to simulated mute",
+        final_action=DecisionAction.MUTE.value,
+        final_level=RiskSeverity.HIGH.value,
+    )
+    review_id = UUID(str(reviewed["review"]["id"]))
+
+    enforced = full_container.enforcement_service.simulate_enforcement(
+        decision_id=decision_id,
+        action=DecisionAction.MUTE.value,
+        target_ref=governance_data["sender_ref"],
+        reason="integration test traceability",
+        actor_ref="governance-engine",
+        duration_seconds=60,
+    )
+    enforcement_id = UUID(str(enforced["id"]))
+    trace = (enforced.get("details") or {}).get("trace") or {}
+    expected = {
+        "message_id": str(message_id),
+        "decision_id": str(decision_id),
+        "case_id": str(case_id),
+        "review_id": str(review_id),
+        "policy_id": str(decision["policy_id"]),
+        "risk_result_id": str(governance_data["risk_result_id"]),
+    }
+    for key, value in expected.items():
+        assert trace.get(key) == value
+    assert trace.get("policy_version") is not None
+
+    with full_container.session_factory() as session:
+        executed = session.scalar(
+            select(OutboxEvent).where(
+                OutboxEvent.dedupe_key == f"enforcement.executed:{enforcement_id}"
+            )
+        )
+        assert executed is not None
+        for key, value in expected.items():
+            assert executed.payload.get(key) == value
+        assert executed.payload.get("simulated_only") is True
+        row = session.get(EnforcementAction, enforcement_id)
+        assert row is not None
+        row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        session.commit()
+
+    assert full_container.governance_repository.expire_due_enforcements() >= 1
+
+    with full_container.session_factory() as session:
+        audit = session.scalar(
+            select(AuditEvent).where(
+                AuditEvent.entity_id == enforcement_id,
+                AuditEvent.action == "enforcement.expired",
+            )
+        )
+        assert audit is not None
+        expired = session.scalar(
+            select(OutboxEvent).where(
+                OutboxEvent.dedupe_key == f"enforcement.expired:{enforcement_id}"
+            )
+        )
+        assert expired is not None
+        assert expired.payload.get("review_id") == str(review_id)
+        assert expired.payload.get("policy_id") == str(decision["policy_id"])
+        assert expired.payload.get("simulated_only") is True
+        session.execute(delete(AuditEvent).where(AuditEvent.entity_id == enforcement_id))
 
 
 @pytest.mark.integration
@@ -307,7 +500,7 @@ def test_feedback_and_audit_are_append_only_on_postgresql(
     assert overridden["decision_status"] == GovernanceDecisionStatus.OVERRIDDEN.value
 
     audit = feedback_service.get_audit_logs(limit=50)
-    assert any(item["action"] == "decision.status_changed" for item in audit)
+    assert any(item["action"] == "decision.overridden" for item in audit)
     trace = feedback_service.trace(message_id)
     assert trace["message"]["id"] == str(message_id)
     assert trace["evaluations"]

@@ -104,7 +104,7 @@ Phase 03 当前：
 | 8. Feedback & Audit | 反馈、误杀漏判、追加式审计、Trace | 已完成并验证 |
 | 9. 基础设施集成 | PostgreSQL + Redis + Kafka，Outbox Pattern | 已完成并验证 |
 | 10. Streamlit UI | 六个页面，真实浏览器渲染 | 已完成并验证 |
-| 11. 测试 | 单元/集成/业务场景/UI 冒烟 | 216 单元 + 22 集成通过 |
+| 11. 测试 | 单元/集成/业务场景/UI 冒烟 | 216 单元 + 25 集成通过 |
 | 12. 文档与交付 | 设计文档、测试报告、完成报告 | 已完成 |
 
 ### Phase 04 真实运行证据
@@ -113,8 +113,8 @@ Phase 03 当前：
 .venv\Scripts\python.exe -m pytest tests/unit -q
 216 passed
 
-.venv\Scripts\python.exe -m pytest tests/integration -q -o addopts=""
-22 passed, 1 warning
+.venv\Scripts\python.exe -m pytest tests/integration -q -m integration
+25 passed, 1 warning
 
 .venv\Scripts\python.exe -m ruff check src tests
 All checks passed

@@ -9,7 +9,7 @@
 | 命令 | 结果 |
 |---|---|
 | `python -m pytest tests/unit -q` | **216 passed** |
-| `python -m pytest tests/integration -q -o addopts=""` | **22 passed**, 1 DeprecationWarning（Alembic 配置提示） |
+| `python -m pytest tests/integration -q -m integration` | **25 passed**, 1 DeprecationWarning（Alembic 配置提示） |
 | `python -m ruff check src tests` | **All checks passed** |
 | `python -m compileall -q src/claro tests` | 通过 |
 | `python tests/ui/governance_pages_smoke.py` | **6/6 页面通过**真实浏览器渲染 |
@@ -30,7 +30,7 @@
 | `tests/unit/test_governance_moderation.py` | 认领校验、状态机、理由与覆盖校验、二次复核、重开 |
 | `tests/unit/test_governance_enforcement.py` | 处置计划、目标/时长约束、到期、目标校验 |
 | `tests/unit/test_governance_scenarios.py` | 15 个业务场景 |
-| `tests/integration/test_governance_postgres.py` | 策略版本/回滚、评估/决策幂等、审核并发与反馈、处置状态与失败、反馈与审计 |
+| `tests/integration/test_governance_postgres.py` | 策略版本/回滚、策略变更改变实际决策、评估/决策幂等、审核并发与反馈、决策覆盖审核闭环、处置全链路追溯与到期审计、处置状态与失败、反馈与审计 |
 | `tests/integration/test_governance_redis.py` | 策略缓存失效、限流计数缓存、玩家状态缓存失效 |
 | `tests/integration/test_governance_kafka.py` | 风险事件消费与 Outbox、真实 Kafka 发布/消费、风险结果持久化 |
 | `tests/ui/governance_pages_smoke.py` | 六个治理页面浏览器冒烟测试 |
@@ -78,3 +78,18 @@
 - 语义检测器仍为显式不可用占位；LLM 顾问默认关闭，未对真实端点验证。
 - UI 身份为模拟身份，未实现生产级身份认证与 RBAC。
 - 未连接真实游戏服务器，所有处罚均为内部模拟。
+
+## 6. 关键验收标准复验
+
+针对图片中提出的三条验收判断，已补充真实数据库验证，不依赖页面存在性：
+
+| 验收标准 | 验证方式 | 结果 |
+|---|---|---|
+| 修改策略后，实际决策结果随之变化 | 同一消息先评估/决策，再创建高优先级策略重新评估/决策；断言新旧 evaluation、decision ID 不同，最终 action 由原值变为策略目标值，且 selected policy 指向新策略 | 通过 |
+| 人工结果关联原始风险，并记录误杀/漏判 | 管理员覆盖决策后断言生成 `review_id`/`case_id`，trace 中可查审核记录；提交 `false_positive` 反馈后断言 `review_id`、`decision_id`、`original_prediction.risk_result_id`、`original_risk`、`policy_version` 均落库 | 通过 |
+| 每次模拟处置可追溯到决策、策略与审核 | 审核后执行 MUTE，断言 `details.trace` 与 executed/failed/released/expired 事件均包含 message/decision/case/review/policy/policy_version/risk_result；到期写入审计并由 trace 可查 | 通过 |
+
+对应测试：
+`tests/integration/test_governance_postgres.py::test_policy_change_changes_decision_for_same_message`、
+`::test_decision_override_creates_review_linked_to_original_risk`、
+`::test_enforcement_events_carry_full_governance_trace`。

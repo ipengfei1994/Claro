@@ -20,6 +20,16 @@ from claro.ui.common import (
 )
 
 _DECISION_STATUSES = ["auto_decided", "pending_review", "human_reviewed", "overridden", "cancelled"]
+_DECISION_ACTIONS = [
+    "allow",
+    "warn",
+    "flag",
+    "review",
+    "block",
+    "mute",
+    "temp_ban",
+    "perm_ban",
+]
 
 
 def render(container: AppContainer) -> None:
@@ -144,11 +154,19 @@ def _render_explanation(service: Any, decision: dict[str, Any], actor: dict[str,
     if actor["role"] != "admin":
         st.caption("决策覆盖需要管理员身份（当前为模拟身份切换）。")
         return
-    with st.expander("覆盖决策（管理员操作，写入审计日志）"):
-        st.warning("覆盖会修改决策状态与理由，用于纠正系统判断；此操作记录在追加式审计日志中。")
+    with st.expander("覆盖决策（管理员操作，写入审核与审计记录）"):
+        st.warning(
+            "覆盖会修改决策状态、写入人工审核记录，并保留原始风险结果与系统动作；此操作同时进入追加式审计日志。"
+        )
         reason = st.text_area("覆盖原因（必填）", key="gd_override_reason", height=80)
-        target_status = st.selectbox(
+        c1, c2 = st.columns(2)
+        target_status = c1.selectbox(
             "目标状态", ["overridden", "cancelled"], key="gd_override_status"
+        )
+        target_action = c2.selectbox(
+            "人工最终动作",
+            ["保持系统动作", *_DECISION_ACTIONS],
+            key="gd_override_action",
         )
         confirm = st.checkbox("我确认覆盖该决策", key="gd_override_confirm")
         if st.button("提交决策覆盖", key="gd_override_btn"):
@@ -160,10 +178,15 @@ def _render_explanation(service: Any, decision: dict[str, Any], actor: dict[str,
                 result = service.override_decision(
                     UUID(decision["id"]),
                     actor_ref=actor["ref"],
+                    actor_role=actor["role"],
                     reason=reason.strip(),
+                    action=None if target_action == "保持系统动作" else target_action,
                     status=target_status,
                 )
-                st.success(f"决策已覆盖为 {status_text(result.get('decision_status'))}")
+                st.success(
+                    f"决策已覆盖为 {status_text(result.get('decision_status'))}；"
+                    f"审核记录 {str(result.get('review_id'))[:8]}"
+                )
                 st.rerun()
             except Exception as error:  # noqa: BLE001
                 st.error(f"覆盖失败：{error}")

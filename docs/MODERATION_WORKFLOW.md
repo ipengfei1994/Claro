@@ -45,6 +45,8 @@ approved / rejected / finalized / resolved → in_review（重新打开）
 
 提交时若同时提供 `feedback_type`，服务层会在同一业务流程内写入 `governance_feedback`，保留原始预测、原始风险、人工结论与差异原因。
 
+决策页的管理员覆盖不是状态字段的单独修改：`GovernanceDecisionService.override_decision()` 会调用 `record_decision_override()`，在同一事务内创建或更新 `moderation_case`、写入 `moderation_review`、回写决策解释、审计与 Outbox 事件。覆盖记录因此始终保有 `review_id`、`case_id`、`decision_id`、`risk_result_id` 与原始系统动作。反馈页可显式填写 `review_id`，使误杀/漏判反馈直接关联到具体人工审核记录。
+
 ## 5. 并发保护
 
 - `claim_case()` 与 `review_case()` 使用 `SELECT ... FOR UPDATE` 行锁与 `lock_version` 乐观锁。

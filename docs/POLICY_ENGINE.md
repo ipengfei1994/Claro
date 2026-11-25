@@ -35,6 +35,8 @@
 
 `specificity()` 定义：有 players = 4，alliances = 3，servers = 2，其他 = 1。范围越具体，在优先级相同时越优先。
 
+评估入口会从消息的 `dataset_id` 读取数据集范围并传入活跃策略查询；绑定数据集的策略只作用于该数据集，未绑定的策略全局生效。该参数由 `PolicyEvaluationService.evaluate_message()` 自动解析，调用方不需要重复传递。
+
 ## 4. 版本与回滚
 
 - 每次创建、修改、启停、回滚都生成新的 `policy_version` 行。

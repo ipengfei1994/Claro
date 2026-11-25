@@ -48,5 +48,6 @@
 - `game.governance.enforcement.executed.v1`
 - `game.governance.enforcement.failed.v1`
 - `game.governance.enforcement.released.v1`
+- `game.governance.enforcement.expired.v1`
 
-所有 payload 都标记 `synthetic=true` 与 `simulated_only=true`。
+所有 payload 都标记 `synthetic=true`、`simulated=true` 与 `simulated_only=true`，并携带 `message_id`、`decision_id`、`case_id`、`review_id`、`policy_id`、`policy_version`、`risk_result_id`。同一关联快照也写入 `enforcement_action.details.trace`，UI 历史处置表直接展示决策、审核工单、审核记录与策略版本。到期处置同样写入 `audit_event`，不再只发事件。
