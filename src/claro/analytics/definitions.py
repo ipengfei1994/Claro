@@ -12,7 +12,7 @@ import json
 from enum import StrEnum
 
 # Must be bumped together with docs/KPI_DEFINITIONS.md whenever a formula changes.
-KPI_DEFINITION_VERSION = "phase-05.1"
+KPI_DEFINITION_VERSION = "phase-05.2"
 
 # Canonical formula identifiers. Quality checks compare this hash with the
 # version returned by the service layer to detect divergent implementations.
@@ -28,8 +28,13 @@ KPI_FORMULAS: dict[str, str] = {
     "task_completion_duration": "moderation_case.closed_at - moderation_case.opened_at",
     "model_metrics": "read evaluation_run.metrics and per_label; no recomputation",
     "policy_hit_rate": "hit_messages / messages_with_policy_evaluation",
+    "policy_automatic_action_rate": "policy automatic_hit_messages / policy hit_messages",
+    "policy_precision": "policy true_positives / (policy true_positives + policy false_positives)",
+    "policy_recall": "policy true_positives / (policy true_positives + policy false_negatives)",
+    "policy_manual_review_rate": "policy review_hit_messages / policy hit_messages",
     "replay_precision": "tp / (tp + fp); positive = label risk and action != allow",
     "replay_recall": "tp / (tp + fn); boundary label counted as negative",
+    "replay_sample_pool": "all scoped labelled messages; clean messages included",
 }
 KPI_DEFINITION_HASH = hashlib.sha256(
     json.dumps(KPI_FORMULAS, sort_keys=True, ensure_ascii=False).encode("utf-8")
@@ -38,6 +43,14 @@ KPI_DEFINITION_HASH = hashlib.sha256(
 PRIMARY_DATASET_NAME = "phase-02-synthetic-s20261125-p5000-m50000"
 LOW_SAMPLE_MESSAGES = 30
 MIN_REPLAY_SAMPLES = 100
+
+# Minimum denominator before a ratio is published as a KPI. Below this the
+# metric is reported as unavailable with its real sample size attached.
+MIN_RATE_DENOMINATOR = 30
+
+# Minimum number of policy decisions before a per-policy quality score is
+# treated as interpretable rather than exploratory.
+MIN_POLICY_DECISIONS = 30
 
 HIGH_SEVERITIES = ("high", "critical")
 RESTRICTIVE_ACTIONS = (

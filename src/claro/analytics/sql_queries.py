@@ -219,6 +219,8 @@ decisions AS (
 sanctions AS (
     SELECT ea.target_ref, COUNT(*) AS sanction_count
     FROM enforcement_action ea
+    JOIN policy_decision pd ON pd.id = ea.decision_id
+    JOIN scoped s ON s.id = pd.message_id
     WHERE ea.target_type = 'player'
     GROUP BY ea.target_ref
 )
@@ -355,6 +357,29 @@ LEFT JOIN message_label ml ON ml.message_id = rr.message_id
 ORDER BY rr.detected_at DESC
 """
 
+SQL_DETECTION_QUALITY = SCOPED_CTE + """
+, detection AS (
+    SELECT DISTINCT re.message_id
+    FROM risk_event re
+    JOIN scoped s ON s.id = re.message_id
+),
+truth AS (
+    SELECT s.id AS message_id,
+           CASE WHEN ml.label = 'risk' THEN TRUE ELSE FALSE END AS is_true_risk
+    FROM scoped s
+    LEFT JOIN message_label ml ON ml.message_id = s.id
+)
+SELECT
+    COUNT(*) FILTER (WHERE d.message_id IS NOT NULL AND t.is_true_risk) AS true_positives,
+    COUNT(*) FILTER (WHERE d.message_id IS NOT NULL AND NOT t.is_true_risk) AS false_positives,
+    COUNT(*) FILTER (WHERE d.message_id IS NULL AND t.is_true_risk) AS false_negatives,
+    COUNT(*) FILTER (WHERE d.message_id IS NULL AND NOT t.is_true_risk) AS true_negatives,
+    COUNT(*) AS sample_size
+FROM scoped s
+JOIN truth t ON t.message_id = s.id
+LEFT JOIN detection d ON d.message_id = s.id
+"""
+
 SQL_POLICY_HITS = SCOPED_CTE + """
 , hits AS (
     SELECT pe.message_id, hit.item ->> 'policy_key' AS policy_key,
@@ -365,7 +390,12 @@ SQL_POLICY_HITS = SCOPED_CTE + """
     JOIN scoped s ON s.id = pe.message_id
 ),
 hit_counts AS (
-    SELECT policy_key, COUNT(DISTINCT message_id) AS replay_hit_messages
+    SELECT policy_key,
+           COUNT(DISTINCT message_id) AS replay_hit_messages,
+           COUNT(DISTINCT message_id) FILTER (WHERE action <> 'review') AS automatic_hit_messages,
+           COUNT(DISTINCT message_id) FILTER (WHERE action = 'review') AS review_hit_messages,
+           COUNT(DISTINCT message_id) FILTER (WHERE action NOT IN ('allow', 'review'))
+               AS enforcement_hit_messages
     FROM hits
     GROUP BY policy_key
 ),
@@ -381,16 +411,53 @@ evaluated AS (
 SELECT p.policy_key, p.id AS policy_id, p.version AS current_version,
        p.hit_count AS cumulative_hit_count, p.action AS configured_action,
        COALESCE(hc.replay_hit_messages, 0) AS replay_hit_messages,
+       COALESCE(hc.automatic_hit_messages, 0) AS automatic_hit_messages,
+       COALESCE(hc.review_hit_messages, 0) AS review_hit_messages,
+       COALESCE(hc.enforcement_hit_messages, 0) AS enforcement_hit_messages,
        COALESCE(e.evaluated_messages, 0) AS evaluated_messages,
        COALESCE(e.restrictive_suggestions, 0) AS restrictive_suggestions,
        COALESCE(e.review_suggestions, 0) AS review_suggestions
 FROM policy p
 LEFT JOIN hit_counts hc ON hc.policy_key = p.policy_key
-LEFT JOIN evaluated e ON TRUE
+CROSS JOIN evaluated e
 WHERE (CAST(:policy_key AS text) IS NULL OR p.policy_key = :policy_key)
   AND p.version > 0
 ORDER BY replay_hit_messages DESC, cumulative_hit_count DESC
 """
+
+SQL_POLICY_QUALITY = SCOPED_CTE + """
+, hits AS (
+    SELECT pe.message_id, hit.item ->> 'policy_key' AS policy_key,
+           hit.item ->> 'action' AS action
+    FROM policy_evaluation pe
+    CROSS JOIN LATERAL jsonb_array_elements(pe.matched_policies) AS hit(item)
+    JOIN scoped s ON s.id = pe.message_id
+),
+truth AS (
+    SELECT s.id AS message_id,
+           CASE WHEN ml.label = 'risk' THEN TRUE ELSE FALSE END AS is_true_risk
+    FROM scoped s
+    LEFT JOIN message_label ml ON ml.message_id = s.id
+)
+SELECT h.policy_key,
+       COUNT(DISTINCT h.message_id) AS hit_messages,
+       COUNT(DISTINCT h.message_id) FILTER (
+           WHERE h.action NOT IN ('allow', 'review') AND t.is_true_risk) AS true_positives,
+       COUNT(DISTINCT h.message_id) FILTER (
+           WHERE h.action NOT IN ('allow', 'review') AND NOT t.is_true_risk) AS false_positives,
+       COUNT(DISTINCT h.message_id) FILTER (
+           WHERE h.action = 'review' AND t.is_true_risk) AS review_true_positives,
+       COUNT(DISTINCT h.message_id) FILTER (
+           WHERE h.action = 'review' AND NOT t.is_true_risk) AS review_false_positives,
+       COUNT(DISTINCT t.message_id) FILTER (WHERE NOT t.is_true_risk) AS truth_negatives,
+       COUNT(DISTINCT t.message_id) FILTER (WHERE t.is_true_risk) AS truth_positives
+FROM hits h
+JOIN truth t ON t.message_id = h.message_id
+WHERE (CAST(:policy_key AS text) IS NULL OR h.policy_key = :policy_key)
+GROUP BY h.policy_key
+ORDER BY hit_messages DESC
+"""
+
 
 SQL_POLICY_EVALUATION_ACTIONS = SCOPED_CTE + """
 SELECT pe.suggested_action,
@@ -414,11 +481,14 @@ SQL_REPLAY_INPUT = SCOPED_CTE.rstrip() + """
 )
 SELECT s.id AS message_id, m.content, s.content_hash, s.channel, s.language, s.sender_ref,
        s.server_ref, s.alliance_id::text AS alliance_id,
-       lr.category, lr.risk_score, lr.severity, lr.confidence,
+       lr.category, COALESCE(lr.risk_score, 0) AS risk_score,
+       COALESCE(lr.severity, 'normal') AS severity,
+       COALESCE(lr.confidence, 0) AS confidence,
+       (lr.message_id IS NOT NULL) AS has_risk_event,
        ml.label AS truth_label
 FROM scoped s
 JOIN message m ON m.id = s.id
-JOIN latest_risk lr ON lr.message_id = s.id
+LEFT JOIN latest_risk lr ON lr.message_id = s.id
 LEFT JOIN message_label ml ON ml.message_id = s.id
 ORDER BY s.id
 LIMIT :limit
@@ -443,6 +513,7 @@ ORDER BY c.message_id
 
 SQL_REPLAY_SUMMARY = """
 SELECT r.run_id, r.created_at, r.sample_count, r.baseline_label, r.candidate_label,
+       r.parameters,
        COUNT(c.message_id) AS case_count,
        COUNT(*) FILTER (WHERE c.baseline_hit) AS baseline_hits,
        COUNT(*) FILTER (WHERE c.candidate_hit) AS candidate_hits,

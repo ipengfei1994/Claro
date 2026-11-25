@@ -33,13 +33,26 @@ def render(container: AppContainer) -> None:
             ("治理决策", "governance_decisions"),
             ("自动处置率", "automatic_handling_rate"),
             ("人工审核率", "review_rate"),
-            ("误杀率（线上）", "false_positive_rate"),
+            ("误杀率（检测层）", "false_positive_rate"),
         ],
     )
     st.caption(
         f"去重风险玩家 {result['kpis']['unique_risk_players']} · "
         f"重复违规玩家 {result['kpis']['repeat_offenders']} · "
         f"有状态决策样本 {result['kpis']['eligible_finalized_decisions']}"
+    )
+    automatic_detail = result["kpis"].get("automatic_handling_rate_detail") or {}
+    if automatic_detail.get("low_sample"):
+        st.warning(
+            f"自动处置率与人工审核率样本量不足（{automatic_detail.get('sample_size')} < 30），"
+            "因此显示为不可计算，而不是 0% 或 100%。"
+        )
+    st.caption(
+        f"检测层误杀率 {result['kpis']['false_positive_rate']} · "
+        f"漏判率 {result['kpis']['false_negative_rate']} · "
+        f"样本量 {result['kpis']['detection_sample_size']} · "
+        f"Precision {result['kpis']['detection_precision']} · "
+        f"Recall {result['kpis']['detection_recall']}"
     )
 
     series = service.risk(filters, "day")
@@ -63,6 +76,6 @@ def render(container: AppContainer) -> None:
     page_header("数据质量摘要")
     st.json(result["quality"])
     st.warning(
-        "本页所有数据均为合成数据。误杀率/漏判率依赖人工标签，当前不可计算，"
-        "因此不以 0 展示。"
+        "本页所有数据均为合成数据。检测层误杀率/漏判率来自 risk_event 与合成 ground truth "
+        "的对比，不代表真实线上人工审核结果。"
     )

@@ -153,7 +153,14 @@ def _f1(tp: int, fp: int, fn: int) -> float | None:
 
 
 def predicted_positive(action: str | None) -> bool:
-    """Binary replay semantics: only ``allow`` is a negative prediction."""
+    """Binary replay semantics: only an explicit allow is a negative prediction.
+
+    ``review`` counts as positive because it is a decision to act on the
+    message (it consumes moderator capacity and blocks the message), which is
+    exactly the behaviour a false-positive measurement must capture. Callers
+    that need the stricter "enforcement only" view should filter on the
+    action value directly.
+    """
     return str(action or "allow").lower() != "allow"
 
 
@@ -190,3 +197,109 @@ def anomaly_peaks(values: Sequence[float], sigma: float = 3.0) -> list[int]:
 def low_sample(total_messages: Any, threshold: int) -> bool:
     """Flag a dimension member with insufficient messages for interpretation."""
     return as_int(total_messages) < threshold
+
+
+def gated_rate(
+    numerator: Any,
+    denominator: Any,
+    *,
+    threshold: int,
+    label: str,
+) -> dict[str, Any]:
+    """Return a rate only when the denominator is large enough to interpret.
+
+    A percentage computed from one or two observations is not a measurement;
+    publishing it as a KPI invites false conclusions. Below the threshold the
+    result is explicitly marked unavailable and the real sample size is kept
+    so the UI can show why.
+    """
+    total = as_int(denominator)
+    observed = as_int(numerator)
+    if total <= 0:
+        return {
+            "value": None,
+            "numerator": observed,
+            "denominator": total,
+            "sample_size": total,
+            "low_sample": True,
+            "reason": f"{label} 分母为 0，不可计算",
+        }
+    if total < threshold:
+        return {
+            "value": None,
+            "numerator": observed,
+            "denominator": total,
+            "sample_size": total,
+            "low_sample": True,
+            "reason": f"{label} 样本量 {total} < {threshold}，比例不可解读",
+        }
+    return {
+        "value": round(observed / total, 6),
+        "numerator": observed,
+        "denominator": total,
+        "sample_size": total,
+        "low_sample": False,
+        "reason": None,
+    }
+
+
+def policy_effectiveness(
+    quality: Mapping[str, Any],
+    *,
+    min_samples: int,
+) -> dict[str, Any]:
+    """Score one policy on detection quality, false-positive risk and review load.
+
+    ``quality`` carries the raw counts produced by ``SQL_POLICY_QUALITY``.
+    The four dimensions are kept separate on purpose: a high hit count alone
+    says nothing about whether the policy is accurate, so callers must present
+    them together rather than collapsing them into a single ranking number.
+    """
+    hits = as_int(quality.get("hit_messages"))
+    tp = as_int(quality.get("true_positives"))
+    fp = as_int(quality.get("false_positives"))
+    review_tp = as_int(quality.get("review_true_positives"))
+    review_fp = as_int(quality.get("review_false_positives"))
+    truth_negatives = as_int(quality.get("truth_negatives"))
+    truth_positives = as_int(quality.get("truth_positives"))
+
+    enforcement_hits = tp + fp
+    review_hits = review_tp + review_fp
+    decision_hits = enforcement_hits + review_hits
+
+    # A policy that matched a message and routed it to a moderator did detect
+    # that message, so review hits count as true positives as well. The manual
+    # review load is reported separately; counting review hits as false
+    # negatives would penalise the same action twice.
+    detected_tp = tp + review_tp
+    detected_fp = fp + review_fp
+    metrics = classification_metrics(
+        {
+            "tp": detected_tp,
+            "fp": detected_fp,
+            "fn": max(truth_positives - detected_tp, 0),
+            "tn": max(truth_negatives - detected_fp, 0),
+        }
+    )
+    return {
+        "hit_messages": hits,
+        "decision_hits": decision_hits,
+        "enforcement_hits": enforcement_hits,
+        "review_hits": review_hits,
+        "true_positives": tp,
+        "false_positives": fp,
+        "review_true_positives": review_tp,
+        "review_false_positives": review_fp,
+        "detected_true_positives": detected_tp,
+        "detected_false_positives": detected_fp,
+        "truth_positives": truth_positives,
+        "truth_negatives": truth_negatives,
+        "precision": metrics["precision"],
+        "recall": metrics["recall"],
+        "f1": metrics["f1"],
+        "false_positive_rate": metrics["false_positive_rate"],
+        "false_negative_rate": metrics["false_negative_rate"],
+        "manual_review_rate": ratio(review_hits, decision_hits),
+        "low_sample": decision_hits < min_samples,
+        "min_samples": min_samples,
+    }

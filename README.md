@@ -30,12 +30,14 @@ Claro 是面向 SLG 场景的本地优先内容安全与风险治理平台。当
 | 反馈与审计 | 误杀/漏判与错误案例、原始模型结果对照、追加式审计日志、全链路 Trace |
 | 治理事件流 | Outbox Pattern，6 类治理 Topic，真实 Kafka 发布验证（137 条事件 0 失败） |
 | 治理 UI | 六个页面：总览、Policy Center、Moderation Workbench、Governance Decisions、Enforcement Center、Feedback & Audit；真实浏览器渲染验证 |
-| 自动化 | **230 个单元测试通过，38 个真实集成测试通过**；Ruff 通过；6/6 治理 UI 页面 + 6/6 分析页面渲染通过 |
-| Phase 05 分析层 | 27 条具名 SQL 在 PostgreSQL 真实执行；KPI 口径单一来源；数据质量检查通过 |
-| Phase 05 回放 | 300 样本策略回放实际执行 23 处动作变化；正式决策与处置表行数不变 |
+| 自动化 | **237 个单元测试通过，46 个真实集成测试通过**；Ruff 通过；6/6 治理 UI 页面 + 6/6 分析页面渲染通过 |
+| Phase 05 分析层 | **29 条具名 SQL** 在 PostgreSQL 真实执行；KPI 口径单一来源（`phase-05.2`）；数据质量检查通过 |
+| Phase 05 指标可信性 | 低样本门禁（分母 < 30 不发布数值）；JOIN 扇出三路径独立重算一致；检测层混淆矩阵覆盖 50,000 条消息；演示库不被测试污染 |
+| Phase 05 策略评估 | 逐策略 Precision / Recall / 误杀率 / 漏判率 / 人工审核占比；实测「命中多 ≠ 效果好」 |
+| Phase 05 回放 | 500 样本策略回放实测执行 10 处动作变化；9 张业务表**内容级 SHA-256 指纹**前后一致 |
 | Phase 05 报告 | 五类报告 Markdown + CSV 导出真实执行；Excel/PDF 未实现（无依赖） |
 
-Hive 阻塞原因：当前 Windows 环境未安装原生 Hive、Hadoop 或 Beeline。不得将该部分标记为运行验证。语义检测器当前为显式不可用占位；LLM 顾问层默认关闭，未对真实端点验证。Phase 05 的 `moderation_review` 与 `governance_feedback` 为空，人工一致性及线上误杀/漏判不可计算；所有策略仅 v1，历史版本对比不可用。
+Hive 阻塞原因：当前 Windows 环境未安装原生 Hive、Hadoop 或 Beeline。不得将该部分标记为运行验证。语义检测器当前为显式不可用占位；LLM 顾问层默认关闭，未对真实端点验证。Phase 05 的 `moderation_review` 与 `governance_feedback` 为空，人工一致性及线上误杀/漏判不可计算；所有策略仅 v1，历史版本对比不可用。Phase 05 的误杀率/漏判率基线建立在 `risk_event` 合成检测输出与 `message_label` 合成 ground truth 之上，属离线模拟指标，不代表线上真实标注效果。
 
 ## 原生环境快速开始
 
@@ -211,6 +213,7 @@ CLARO_UI__THEME=system
 - [策略评估](docs/STRATEGY_EVALUATION.md)
 - [Hive 离线分析状态](docs/HIVE_OFFLINE_ANALYTICS.md)
 - [Phase 05 测试报告](docs/PHASE_05_TEST_REPORT.md)
+- [Phase 05 三项验收标准审查报告](docs/PHASE_05_ACCEPTANCE_REVIEW.md)
 - [Phase 05 完成报告](docs/PHASE_05_COMPLETION_REPORT.md)
 
 ## 当前阶段边界
@@ -222,4 +225,5 @@ CLARO_UI__THEME=system
 - 所有治理处置均为平台内部模拟，不连接真实游戏服务器。
 - UI 身份为模拟身份，鉴权/RBAC 与生产级高可用尚未实现。
 - 分析层中人工审核标签、反馈标注与策略多版本历史缺失，相应指标标记为不可计算。
+- 分析层比例指标在分母 < 30 时不发布数值，显示「不可计算」并附样本量。
 - Excel/PDF 报告导出未实现；仅提供 Markdown 与 CSV。

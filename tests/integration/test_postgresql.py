@@ -12,8 +12,8 @@ from sqlalchemy.exc import IntegrityError
 
 from claro.bootstrap import AppContainer
 from claro.config.settings import PROJECT_ROOT
-from claro.data_access.models import Message, PolicyDecision
-from claro.data_access.seed import seed_synthetic_data
+from claro.data_access.models import Dataset, Message, PolicyDecision
+from claro.data_access.seed import DATASET_NAME, seed_synthetic_data
 
 
 @pytest.mark.integration
@@ -58,7 +58,18 @@ def test_postgresql_connection_and_core_schema(full_container: AppContainer) -> 
     assert second_seed == {**first_seed, "created": False}
 
     with full_container.session_factory() as session:
-        message = session.scalar(select(Message).where(Message.is_synthetic.is_(True)))
+        # Scope the fixture to the dataset this test seeded. Selecting any
+        # synthetic message would reach into the shared demonstration
+        # dataset, and the timestamp rewrite below must not survive the test:
+        # a permanently moved message would silently change every analytics
+        # window that follows.
+        seed_dataset = session.scalar(select(Dataset).where(Dataset.name == DATASET_NAME))
+        assert seed_dataset is not None
+        message = session.scalar(
+            select(Message)
+            .where(Message.dataset_id == seed_dataset.id)
+            .order_by(Message.occurred_at, Message.external_message_id)
+        )
         assert message is not None
         decision = session.scalar(
             select(PolicyDecision).where(PolicyDecision.message_id == message.id)
@@ -68,27 +79,44 @@ def test_postgresql_connection_and_core_schema(full_container: AppContainer) -> 
         assert decision is not None
         assert isinstance(decision.risk_score, Decimal)
         message_id = message.id
+        original_occurred_at = message.occurred_at
 
     source_time = datetime(2026, 11, 24, 12, 30, tzinfo=timezone(timedelta(hours=8)))
     expected_utc = source_time.astimezone(UTC)
-    with full_container.engine.begin() as connection:
-        connection.execute(text("SET LOCAL TIME ZONE 'Asia/Shanghai'"))
-        assert connection.execute(text("SHOW TIME ZONE")).scalar_one() == "Asia/Shanghai"
-        connection.execute(
-            update(Message).where(Message.id == message_id).values(occurred_at=source_time)
-        )
-        stored_utc = connection.execute(
-            text("SELECT occurred_at AT TIME ZONE 'UTC' FROM message WHERE id = :message_id"),
-            {"message_id": message_id},
-        ).scalar_one()
-        loaded_time = connection.execute(
-            select(Message.occurred_at).where(Message.id == message_id)
-        ).scalar_one()
+    try:
+        with full_container.engine.begin() as connection:
+            connection.execute(text("SET LOCAL TIME ZONE 'Asia/Shanghai'"))
+            assert connection.execute(text("SHOW TIME ZONE")).scalar_one() == "Asia/Shanghai"
+            connection.execute(
+                update(Message).where(Message.id == message_id).values(occurred_at=source_time)
+            )
+            stored_utc = connection.execute(
+                text("SELECT occurred_at AT TIME ZONE 'UTC' FROM message WHERE id = :message_id"),
+                {"message_id": message_id},
+            ).scalar_one()
+            loaded_time = connection.execute(
+                select(Message.occurred_at).where(Message.id == message_id)
+            ).scalar_one()
 
-    assert stored_utc == expected_utc.replace(tzinfo=None)
-    assert loaded_time == expected_utc
-    assert loaded_time.tzinfo is not None
-    assert loaded_time.utcoffset() == timedelta(0)
+        assert stored_utc == expected_utc.replace(tzinfo=None)
+        assert loaded_time == expected_utc
+        assert loaded_time.tzinfo is not None
+        assert loaded_time.utcoffset() == timedelta(0)
+    finally:
+        # Restore the original timestamp. Leaving it rewritten would move the
+        # message out of every analytics window that includes it, so the
+        # reported message counts would drift on each test run.
+        with full_container.engine.begin() as connection:
+            connection.execute(
+                update(Message)
+                .where(Message.id == message_id)
+                .values(occurred_at=original_occurred_at)
+            )
+
+    with full_container.session_factory() as session:
+        restored = session.get(Message, message_id)
+        assert restored is not None
+        assert restored.occurred_at == original_occurred_at
 
     with full_container.session_factory() as session:
         message = session.get(Message, message_id)

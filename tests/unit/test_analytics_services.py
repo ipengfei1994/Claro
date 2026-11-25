@@ -205,11 +205,38 @@ class FakeRepository:
                 "current_version": 1,
                 "configured_action": "review",
                 "cumulative_hit_count": 5,
-                "replay_hit_messages": 2,
-                "evaluated_messages": 4,
-                "review_suggestions": 1,
+                "replay_hit_messages": 40,
+                "automatic_hit_messages": 25,
+                "review_hit_messages": 15,
+                "enforcement_hit_messages": 25,
+                "evaluated_messages": 100,
+                "review_suggestions": 15,
+                "restrictive_suggestions": 25,
             }
         ]
+
+    def policy_quality(self, filters: AnalyticsFilters) -> list[dict[str, Any]]:
+        return [
+            {
+                "policy_key": "p1",
+                "hit_messages": 40,
+                "true_positives": 20,
+                "false_positives": 5,
+                "review_true_positives": 10,
+                "review_false_positives": 5,
+                "truth_negatives": 60,
+                "truth_positives": 40,
+            }
+        ]
+
+    def detection_quality(self, filters: AnalyticsFilters) -> dict[str, Any]:
+        return {
+            "true_positives": 8,
+            "false_positives": 2,
+            "false_negatives": 0,
+            "true_negatives": 90,
+            "sample_size": 100,
+        }
 
     def policy_evaluation_actions(self, filters: AnalyticsFilters) -> list[dict[str, Any]]:
         return [
@@ -262,12 +289,19 @@ def _filters() -> AnalyticsFilters:
     )
 
 
-def test_overview_uses_canonical_risk_rate_and_hides_unavailable_fp() -> None:
+def test_overview_uses_canonical_risk_rate_and_reports_detection_quality() -> None:
     result = AnalyticsService(FakeRepository()).overview(_filters())
     assert result["kpis"]["total_messages"] == 10
     assert result["kpis"]["risk_rate"]["risk_rate"] == 0.2
-    assert result["kpis"]["false_positive_rate"] is None
-    assert result["kpis"]["automatic_handling_rate"] == 0.5
+    # Detection quality is measured against the synthetic ground truth.
+    assert result["kpis"]["detection_precision"] == 0.8
+    assert result["kpis"]["detection_recall"] == 1.0
+    assert result["kpis"]["detection_sample_size"] == 100
+    # The governance denominator here is 2, below the gate of 30, so the ratio
+    # must be reported as unavailable instead of a misleading 0.5.
+    assert result["kpis"]["automatic_handling_rate"] is None
+    assert result["kpis"]["automatic_handling_rate_detail"]["low_sample"] is True
+    assert result["kpis"]["automatic_handling_rate_detail"]["sample_size"] == 2
 
 
 def test_risk_service_reports_category_share_and_anomalies() -> None:
@@ -289,11 +323,20 @@ def test_community_service_flags_low_sample_units() -> None:
 
 def test_governance_service_keeps_moderation_and_feedback_limits_explicit() -> None:
     result = AnalyticsService(FakeRepository()).governance(_filters())
-    assert result["decisions"]["automatic_handling_rate"] == 0.5
-    assert result["decisions"]["override_rate"] == 0.0
+    # Governance ratios are gated: with 2 eligible decisions the ratio is
+    # unavailable, not 0.5.
+    assert result["decisions"]["automatic_handling_rate"] is None
+    assert result["decisions"]["automatic_handling_rate_detail"]["low_sample"] is True
+    assert result["decisions"]["override_rate"] is None
     assert result["moderation"]["p50_seconds"] == 100
     assert result["moderation"]["human_review_duration_available"] is False
     assert result["observed_confusion"]["samples"] == 2
+    # The persisted risk_result slice is too small to interpret.
+    assert result["observed_confusion"]["low_sample"] is True
+    assert result["observed_confusion"]["interpretable"] is False
+    # The detection layer has a full-window baseline.
+    assert result["detection_confusion"]["samples"] == 100
+    assert result["detection_confusion"]["precision"] == 0.8
 
 
 def test_model_and_strategy_services_expose_limited_comparisons() -> None:
@@ -303,6 +346,20 @@ def test_model_and_strategy_services_expose_limited_comparisons() -> None:
     assert model["version_comparison_available"] is False
     assert model["model_human_agreement"]["available"] is False
     strategy = service.strategy(_filters())
-    assert strategy["policies"][0]["hit_rate"] == 0.5
-    assert strategy["policies"][0]["precision"] is None
+    policy = strategy["policies"][0]
+    # Per-policy rates use that policy's own denominator, not a scope-wide
+    # constant broadcast onto every row.
+    assert policy["hit_rate"]["value"] == 0.4
+    assert policy["hit_rate"]["denominator"] == 100
+    assert policy["automatic_action_rate"]["value"] == 0.625
+    assert policy["automatic_action_rate"]["denominator"] == 40
+    assert policy["manual_review_rate"]["value"] == 0.375
+    # Quality is scored per policy against the ground truth. Review hits count
+    # as detections: tp=20+10=30, fp=5+5=10, fn=40-30=10, tn=60-10=50.
+    assert policy["precision"] == 0.75
+    assert policy["recall"] == 0.75
+    assert policy["false_positive_rate"] == 0.166667
+    assert policy["false_negative_rate"] == 0.25
+    assert policy["quality_sample_size"] == 40
+    assert policy["quality_low_sample"] is False
     assert strategy["version_comparison"]["available"] is False

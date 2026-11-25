@@ -18,6 +18,7 @@ from sqlalchemy.orm import sessionmaker
 from claro.analytics.data_access import AnalyticsRepository
 from claro.analytics.definitions import (
     KPI_DEFINITION_VERSION,
+    MIN_POLICY_DECISIONS,
     MIN_REPLAY_SAMPLES,
     TIER_LABELS,
     DataSourceTier,
@@ -164,10 +165,13 @@ class StrategyReplayService:
         candidate_label = str(candidate.get("candidate_label") or "candidate")
 
         cases: list[dict[str, Any]] = []
+        baseline_policy_stats: dict[str, dict[str, Any]] = {}
+        candidate_policy_stats: dict[str, dict[str, Any]] = {}
         for row in inputs:
             category = str(row.get("category") or "other")
             score = float(as_float(row.get("risk_score")) or 0.0)
             confidence = float(as_float(row.get("confidence")) or 0.0)
+            severity = str(row.get("severity") or "normal")
             context = PolicyContext(
                 message_id=row["message_id"],
                 content=str(row.get("content") or ""),
@@ -178,7 +182,7 @@ class StrategyReplayService:
                 server_ref=row.get("server_ref"),
                 alliance_id=row.get("alliance_id"),
                 risk_score=score,
-                risk_level=str(row["severity"]),
+                risk_level=severity,
                 confidence=confidence,
                 categories=(category,),
                 category_scores={category: score},
@@ -200,6 +204,67 @@ class StrategyReplayService:
                 diff_type = "added_hit" if c_hit else "removed_hit"
             else:
                 diff_type = action_diff(baseline_outcome.action, candidate_outcome.action)
+            # Per-policy attribution: a policy that matched a message is held
+            # responsible for that message, so its own precision/recall can be
+            # measured separately from the aggregate outcome.
+            for match in baseline_outcome.matched:
+                key = match.policy.policy_key
+                bucket = baseline_policy_stats.setdefault(
+                    key,
+                    {
+                        "policy_key": key,
+                        "hit_messages": 0,
+                        "enforcement_hits": 0,
+                        "review_hits": 0,
+                        "true_positives": 0,
+                        "false_positives": 0,
+                        "review_true_positives": 0,
+                        "review_false_positives": 0,
+                    },
+                )
+                bucket["hit_messages"] += 1
+                action = match.policy.action
+                if action == "review":
+                    bucket["review_hits"] += 1
+                    if truth:
+                        bucket["review_true_positives"] += 1
+                    else:
+                        bucket["review_false_positives"] += 1
+                elif action != "allow":
+                    bucket["enforcement_hits"] += 1
+                    if truth:
+                        bucket["true_positives"] += 1
+                    else:
+                        bucket["false_positives"] += 1
+            for match in candidate_outcome.matched:
+                key = match.policy.policy_key
+                bucket = candidate_policy_stats.setdefault(
+                    key,
+                    {
+                        "policy_key": key,
+                        "hit_messages": 0,
+                        "enforcement_hits": 0,
+                        "review_hits": 0,
+                        "true_positives": 0,
+                        "false_positives": 0,
+                        "review_true_positives": 0,
+                        "review_false_positives": 0,
+                    },
+                )
+                bucket["hit_messages"] += 1
+                action = match.policy.action
+                if action == "review":
+                    bucket["review_hits"] += 1
+                    if truth:
+                        bucket["review_true_positives"] += 1
+                    else:
+                        bucket["review_false_positives"] += 1
+                elif action != "allow":
+                    bucket["enforcement_hits"] += 1
+                    if truth:
+                        bucket["true_positives"] += 1
+                    else:
+                        bucket["false_positives"] += 1
             cases.append(
                 {
                     "message_id": row["message_id"],
@@ -227,16 +292,20 @@ class StrategyReplayService:
                     "input_snapshot": {
                         "content_hash": str(row["content_hash"]),
                         "category": category,
-                        "severity": str(row["severity"]),
+                        "severity": severity,
                         "risk_score": score,
                         "confidence": confidence,
                         "truth_label": row.get("truth_label"),
+                        "has_risk_event": bool(row.get("has_risk_event")),
                         "rate_count": 0,
                     },
                 }
             )
 
         run_id = uuid4()
+        with_risk_event = sum(1 for case in cases if case["input_snapshot"]["has_risk_event"])
+        truth_positives = sum(1 for case in cases if truth_positive(case["truth_label"]))
+        truth_negatives = len(cases) - truth_positives
         parameters = {
             "candidate": candidate,
             "sample_limit": sample_limit,
@@ -245,6 +314,15 @@ class StrategyReplayService:
             "evaluation_now": now.isoformat(),
             "policy_effectiveness_basis": "evaluation time, not message time",
             "rate_count": 0,
+            "sample_pool": {
+                "definition": "all scoped labelled messages, clean messages included",
+                "with_risk_event": with_risk_event,
+                "without_risk_event": len(cases) - with_risk_event,
+                "truth_positives": truth_positives,
+                "truth_negatives": truth_negatives,
+            },
+            "baseline_policy_effectiveness": list(baseline_policy_stats.values()),
+            "candidate_policy_effectiveness": list(candidate_policy_stats.values()),
         }
         with session_scope(self._sessions) as session:
             session.add(
@@ -272,6 +350,91 @@ class StrategyReplayService:
     # ------------------------------------------------------------------
     # Reporting on stored replays
     # ------------------------------------------------------------------
+    def _policy_effectiveness(
+        self,
+        parameters: Any,
+        key: str,
+        case_count: int,
+    ) -> list[dict[str, Any]]:
+        """Turn stored per-policy counters into interpretable quality metrics.
+
+        A policy that matched many messages is not necessarily a good policy.
+        Each entry therefore keeps detection quality (precision/recall), the
+        false-positive and false-negative risk and the manual review load
+        side by side, so a ranking can never be driven by hit count alone.
+
+        Recall and false-negative risk are only meaningful for policies that
+        actually act on risk: a policy configured to allow everything never
+        performs enforcement, so it has no detection performance to report.
+        Such policies are marked explicitly instead of being shown as a
+        perfect 0% recall.
+        """
+        rows = (parameters or {}).get(key) or []
+        if not isinstance(rows, list):
+            return []
+        truth_positives = as_int(
+            ((parameters or {}).get("sample_pool") or {}).get("truth_positives")
+        )
+        truth_negatives = as_int(
+            ((parameters or {}).get("sample_pool") or {}).get("truth_negatives")
+        )
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            hits = as_int(row.get("hit_messages"))
+            tp = as_int(row.get("true_positives"))
+            fp = as_int(row.get("false_positives"))
+            review_tp = as_int(row.get("review_true_positives"))
+            review_fp = as_int(row.get("review_false_positives"))
+            enforcement_hits = as_int(row.get("enforcement_hits"))
+            review_hits = as_int(row.get("review_hits"))
+            acts_on_risk = enforcement_hits + review_hits > 0
+            if acts_on_risk:
+                # A matched message routed to a moderator was still detected,
+                # so review hits count as true positives. The review load is
+                # reported on its own axis.
+                detected_tp = tp + review_tp
+                detected_fp = fp + review_fp
+                metrics = classification_metrics(
+                    {
+                        "tp": detected_tp,
+                        "fp": detected_fp,
+                        "fn": max(truth_positives - detected_tp, 0),
+                        "tn": max(truth_negatives - detected_fp, 0),
+                    }
+                )
+            else:
+                # Never acts: no detection performance exists.
+                metrics = {
+                    "precision": None,
+                    "recall": None,
+                    "f1": None,
+                    "false_positive_rate": None,
+                    "false_negative_rate": None,
+                }
+            result.append(
+                {
+                    "policy_key": str(row.get("policy_key")),
+                    "hit_messages": hits,
+                    "enforcement_hits": enforcement_hits,
+                    "review_hits": review_hits,
+                    "true_positives": tp,
+                    "false_positives": fp,
+                    "acts_on_risk": acts_on_risk,
+                    "precision": metrics["precision"],
+                    "recall": metrics["recall"],
+                    "f1": metrics["f1"],
+                    "false_positive_rate": metrics["false_positive_rate"],
+                    "false_negative_rate": metrics["false_negative_rate"],
+                    "manual_review_rate": ratio(review_hits, enforcement_hits + review_hits),
+                    "sample_size": case_count,
+                    "low_sample": hits < MIN_POLICY_DECISIONS,
+                }
+            )
+        result.sort(key=lambda item: (-item["hit_messages"], item["policy_key"]))
+        return result
+
     def list_runs(self) -> dict[str, Any]:
         runs = [jsonable(row) for row in self._repository.replay_runs()]
         return {"runs": runs, "simulation": True}
@@ -285,21 +448,37 @@ class StrategyReplayService:
             c_hits = as_int(row["candidate_hits"])
             b_fp, b_fn = as_int(row["baseline_fp"]), as_int(row["baseline_fn"])
             c_fp, c_fn = as_int(row["candidate_fp"]), as_int(row["candidate_fn"])
+            # The confusion matrix is rebuilt from the per-case truth/prediction
+            # flags, never from hit counts. A policy that matched a message is
+            # not the same thing as a message the system decided to act on, so
+            # mixing the two would silently corrupt the false-positive rate.
+            b_truth_pos = as_int(
+                ((row.get("parameters") or {}).get("sample_pool") or {}).get("truth_positives")
+            )
+            b_truth_neg = case_count - b_truth_pos
+            c_truth_pos = b_truth_pos
+            c_truth_neg = b_truth_neg
             baseline_metrics = classification_metrics(
                 {
-                    "tp": max(b_hits - b_fp, 0),
+                    "tp": max(b_truth_pos - b_fn, 0),
                     "fp": b_fp,
                     "fn": b_fn,
-                    "tn": max(case_count - b_hits - b_fn, 0),
+                    "tn": max(b_truth_neg - b_fp, 0),
                 }
             )
             candidate_metrics = classification_metrics(
                 {
-                    "tp": max(c_hits - c_fp, 0),
+                    "tp": max(c_truth_pos - c_fn, 0),
                     "fp": c_fp,
                     "fn": c_fn,
-                    "tn": max(case_count - c_hits - c_fn, 0),
+                    "tn": max(c_truth_neg - c_fp, 0),
                 }
+            )
+            baseline_policies = self._policy_effectiveness(
+                row.get("parameters"), "baseline_policy_effectiveness", case_count
+            )
+            candidate_policies = self._policy_effectiveness(
+                row.get("parameters"), "candidate_policy_effectiveness", case_count
             )
             runs.append(
                 {
@@ -308,17 +487,20 @@ class StrategyReplayService:
                     "sample_count": case_count,
                     "baseline_label": row["baseline_label"],
                     "candidate_label": row["candidate_label"],
+                    "sample_pool": (row.get("parameters") or {}).get("sample_pool", {}),
                     "baseline": {
                         "hits": b_hits,
                         "hit_rate": ratio(b_hits, case_count),
                         "review_actions": as_int(row["baseline_reviews"]),
                         "metrics": baseline_metrics,
+                        "policy_effectiveness": baseline_policies,
                     },
                     "candidate": {
                         "hits": c_hits,
                         "hit_rate": ratio(c_hits, case_count),
                         "review_actions": as_int(row["candidate_reviews"]),
                         "metrics": candidate_metrics,
+                        "policy_effectiveness": candidate_policies,
                     },
                     "differences": {
                         "added_hits": as_int(row["added_hits"]),
@@ -343,11 +525,14 @@ class StrategyReplayService:
             "definition_version": KPI_DEFINITION_VERSION,
             "notes": [
                 "离线回放使用历史消息快照，不触发真实处置，不修改正式决策。",
+                "样本池包含窗口内全部已标注消息，含无风险事件的正常消息；"
+                "因此真负例存在，误杀率可被计算。",
                 "Precision/Recall 使用合成 message_label 作为 ground truth，boundary 计为负例。",
                 "rate_count 固定为 0，限流类策略的回放不等同于线上实时行为。",
                 "策略生效判断使用回放执行时刻（策略创建于消息历史之后），"
                 "不是消息发生时刻的历史策略重建。",
                 f"样本数低于 {MIN_REPLAY_SAMPLES} 时仅作为探索性结果。",
+                "回放指标衡量候选策略相对基线的变化，不等于线上干预效果。",
             ],
         }
         return jsonable(result)

@@ -18,6 +18,8 @@ from claro.analytics.definitions import (
     KPI_DEFINITION_HASH,
     KPI_DEFINITION_VERSION,
     LOW_SAMPLE_MESSAGES,
+    MIN_POLICY_DECISIONS,
+    MIN_RATE_DENOMINATOR,
     TIER_LABELS,
     DataSourceTier,
 )
@@ -28,7 +30,9 @@ from claro.analytics.metrics import (
     as_int,
     binary_confusion,
     classification_metrics,
+    gated_rate,
     low_sample,
+    policy_effectiveness,
     predicted_positive,
     ratio,
     risk_rate,
@@ -89,6 +93,27 @@ class AnalyticsService:
         raw = self._repository.overview(filters)
         governance = self._repository.governance_totals(filters)
         quality = self._quality.summary()
+        detection = self._repository.detection_quality(filters)
+        automatic_rate = gated_rate(
+            governance["auto_decided"],
+            governance["eligible_finalized"],
+            threshold=MIN_RATE_DENOMINATOR,
+            label="自动处置率",
+        )
+        review_rate = gated_rate(
+            governance["review_decisions"],
+            governance["eligible_finalized"],
+            threshold=MIN_RATE_DENOMINATOR,
+            label="人工审核率",
+        )
+        detection_metrics = classification_metrics(
+            {
+                "tp": as_int(detection["true_positives"]),
+                "fp": as_int(detection["false_positives"]),
+                "fn": as_int(detection["false_negatives"]),
+                "tn": as_int(detection["true_negatives"]),
+            }
+        )
         result = self._envelope(filters, DataSourceTier.SYNTHETIC_SNAPSHOT)
         result.update(
             {
@@ -102,14 +127,16 @@ class AnalyticsService:
                     "repeat_offenders": as_int(raw["repeat_offenders"]),
                     "governance_decisions": as_int(governance["total_decisions"]),
                     "eligible_finalized_decisions": as_int(governance["eligible_finalized"]),
-                    "automatic_handling_rate": ratio(
-                        governance["auto_decided"], governance["eligible_finalized"]
-                    ),
-                    "review_rate": ratio(
-                        governance["review_decisions"], governance["eligible_finalized"]
-                    ),
-                    "false_positive_rate": None,
-                    "false_negative_rate": None,
+                    "automatic_handling_rate": automatic_rate["value"],
+                    "automatic_handling_rate_detail": automatic_rate,
+                    "review_rate": review_rate["value"],
+                    "review_rate_detail": review_rate,
+                    "false_positive_rate": detection_metrics["false_positive_rate"],
+                    "false_negative_rate": detection_metrics["false_negative_rate"],
+                    "detection_precision": detection_metrics["precision"],
+                    "detection_recall": detection_metrics["recall"],
+                    "detection_f1": detection_metrics["f1"],
+                    "detection_sample_size": as_int(detection["sample_size"]),
                 },
                 "coverage": {
                     "active_players": as_int(raw["active_players"]),
@@ -125,9 +152,10 @@ class AnalyticsService:
                 },
                 "notes": [
                     "Risk Rate = 去重风险消息数 / 去重消息数，时间轴统一使用 message.occurred_at。",
-                    "Automatic Handling Rate 分母仅为有决策状态的记录，"
-                    "当前样本量见 eligible_finalized_decisions。",
-                    "误杀率/漏判率需要人工标签；当前 governance_feedback 为 0，显示不可计算。",
+                    "Automatic Handling Rate 分母仅为有决策状态的记录；"
+                    "分母不足 30 时显示不可计算并标注真实样本量，不展示 0 或 1。",
+                    "误杀率/漏判率来自 risk_event 检测层与合成 ground truth 的对比，"
+                    "不是线上真实人工标注结果。",
                 ],
             }
         )
@@ -287,15 +315,36 @@ class AnalyticsService:
         auto = as_int(totals["auto_decided"])
         reviewed = as_int(totals["human_reviewed"])
         overridden = as_int(totals["overridden"])
+        automatic_rate = gated_rate(
+            totals["auto_decided"],
+            totals["eligible_finalized"],
+            threshold=MIN_RATE_DENOMINATOR,
+            label="自动处置率",
+        )
+        review_rate = gated_rate(
+            totals["review_decisions"],
+            totals["eligible_finalized"],
+            threshold=MIN_RATE_DENOMINATOR,
+            label="人工审核率",
+        )
+        override_rate = gated_rate(
+            overridden,
+            reviewed + overridden,
+            threshold=MIN_RATE_DENOMINATOR,
+            label="人工推翻率",
+        )
         decisions = {
             "total_decisions": as_int(totals["total_decisions"]),
             "decided_messages": as_int(totals["decided_messages"]),
             "eligible_finalized": eligible,
             "automatic_decisions": auto,
             "manual_review_decisions": as_int(totals["review_decisions"]),
-            "automatic_handling_rate": ratio(auto, eligible),
-            "review_rate": ratio(as_int(totals["review_decisions"]), eligible),
-            "override_rate": ratio(overridden, reviewed + overridden),
+            "automatic_handling_rate": automatic_rate["value"],
+            "automatic_handling_rate_detail": automatic_rate,
+            "review_rate": review_rate["value"],
+            "review_rate_detail": review_rate,
+            "override_rate": override_rate["value"],
+            "override_rate_detail": override_rate,
             "linked_evaluations": as_int(totals["linked_evaluations"]),
         }
         distribution = [
@@ -359,6 +408,20 @@ class AnalyticsService:
             if row["truth_label"] is not None
         ]
         observed_confusion = classification_metrics(binary_confusion(pairs))
+        # The persisted risk_result table only covers a handful of messages.
+        # Rates derived from it are marked unavailable rather than shown as
+        # authoritative numbers.
+        observed_confusion["low_sample"] = observed_confusion["samples"] < MIN_RATE_DENOMINATOR
+        observed_confusion["interpretable"] = not observed_confusion["low_sample"]
+        detection = self._repository.detection_quality(filters)
+        detection_metrics = classification_metrics(
+            {
+                "tp": as_int(detection["true_positives"]),
+                "fp": as_int(detection["false_positives"]),
+                "fn": as_int(detection["false_negatives"]),
+                "tn": as_int(detection["true_negatives"]),
+            }
+        )
         result = self._envelope(filters, DataSourceTier.DERIVED)
         result.update(
             {
@@ -368,13 +431,16 @@ class AnalyticsService:
                 "moderation_by_status": moderation_status,
                 "enforcement": enforcement,
                 "observed_confusion": observed_confusion,
+                "detection_confusion": detection_metrics,
                 "notes": [
                     "Automatic Handling Rate 分母 = 有决策状态且非 cancelled 的记录；"
-                    "其余为生成器 legacy 记录。",
+                    "分母不足 30 时显示不可计算并标注真实样本量。",
                     "审核耗时来自 moderation_case.opened_at → closed_at，"
                     "属于合成任务关闭耗时，不是人工审核耗时。",
                     "moderation_review 与 governance_feedback 均为 0 行，"
                     "人工推翻率与线上误杀/漏判不可计算。",
+                    "observed_confusion 仅覆盖 risk_result 已落库的消息；"
+                    "样本不足时只作探索性参考，完整基线见 detection_confusion。",
                     "所有 enforcement_action 均为 simulated=true 的模拟处置。",
                 ],
             }
@@ -467,30 +533,63 @@ class AnalyticsService:
     def strategy(self, filters: AnalyticsFilters) -> dict[str, Any]:
         hits = self._repository.policy_hits(filters)
         actions = self._repository.policy_evaluation_actions(filters)
-        policies = [
-            {
-                "policy_key": row["policy_key"],
-                "policy_id": str(row["policy_id"]),
-                "version": as_int(row["current_version"]),
-                "configured_action": row["configured_action"],
-                "cumulative_hit_count": as_int(row["cumulative_hit_count"]),
-                "replay_hit_messages": as_int(row["replay_hit_messages"]),
-                "evaluated_messages": as_int(row["evaluated_messages"]),
-                "hit_rate": ratio(row["replay_hit_messages"], row["evaluated_messages"]),
-                "review_suggestions": as_int(row["review_suggestions"]),
-                "automatic_action_rate": ratio(
-                    as_int(row["evaluated_messages"]) - as_int(row["review_suggestions"]),
-                    as_int(row["evaluated_messages"]),
-                ),
-                "false_positive_rate": None,
-                "false_negative_rate": None,
-                "precision": None,
-                "recall": None,
-                "f1": None,
-            }
-            for row in hits
-            if as_int(row["current_version"]) > 0
-        ]
+        quality_rows = {
+            str(row["policy_key"]): row for row in self._repository.policy_quality(filters)
+        }
+        policies = []
+        for row in hits:
+            if as_int(row["current_version"]) <= 0:
+                continue
+            key = str(row["policy_key"])
+            hit_messages = as_int(row["replay_hit_messages"])
+            automatic_hits = as_int(row["automatic_hit_messages"])
+            review_hits = as_int(row["review_hit_messages"])
+            effectiveness = policy_effectiveness(
+                quality_rows.get(key, {}), min_samples=MIN_POLICY_DECISIONS
+            )
+            policies.append(
+                {
+                    "policy_key": key,
+                    "policy_id": str(row["policy_id"]),
+                    "version": as_int(row["current_version"]),
+                    "configured_action": row["configured_action"],
+                    "cumulative_hit_count": as_int(row["cumulative_hit_count"]),
+                    "replay_hit_messages": hit_messages,
+                    "evaluated_messages": as_int(row["evaluated_messages"]),
+                    # Hit rate keeps its documented denominator: messages that
+                    # carry a policy evaluation record in this window.
+                    "hit_rate": gated_rate(
+                        hit_messages,
+                        row["evaluated_messages"],
+                        threshold=MIN_RATE_DENOMINATOR,
+                        label="策略命中率",
+                    ),
+                    # Automatic/manual split is per policy, computed from the
+                    # action each policy itself proposed on the messages it hit.
+                    "automatic_action_rate": gated_rate(
+                        automatic_hits,
+                        hit_messages,
+                        threshold=MIN_RATE_DENOMINATOR,
+                        label="自动执行比例",
+                    ),
+                    "manual_review_rate": gated_rate(
+                        review_hits,
+                        hit_messages,
+                        threshold=MIN_RATE_DENOMINATOR,
+                        label="人工审核比例",
+                    ),
+                    "enforcement_hit_messages": as_int(row["enforcement_hit_messages"]),
+                    "precision": effectiveness["precision"],
+                    "recall": effectiveness["recall"],
+                    "f1": effectiveness["f1"],
+                    "false_positive_rate": effectiveness["false_positive_rate"],
+                    "false_negative_rate": effectiveness["false_negative_rate"],
+                    "manual_review_rate_raw": effectiveness["manual_review_rate"],
+                    "quality_sample_size": effectiveness["decision_hits"],
+                    "quality_low_sample": effectiveness["low_sample"],
+                    "quality_available": effectiveness["decision_hits"] > 0,
+                }
+            )
         action_rows = [
             {
                 "suggested_action": row["suggested_action"],
@@ -500,20 +599,34 @@ class AnalyticsService:
             }
             for row in actions
         ]
+        quality_available = [item for item in policies if item["quality_available"]]
         result = self._envelope(filters, DataSourceTier.DERIVED)
         result.update(
             {
                 "policies": policies,
                 "action_distribution": action_rows,
+                "quality_summary": {
+                    "policies_with_quality_data": len(quality_available),
+                    "policies_total": len(policies),
+                    "min_samples": MIN_POLICY_DECISIONS,
+                    "note": (
+                        "识别质量指标基于合成 ground truth，样本不足时只作探索性参考；"
+                        "命中次数高不代表治理效果好，必须同时看误杀、漏判与人工审核负载。"
+                    ),
+                },
                 "version_comparison": {
                     "available": False,
                     "reason": "当前所有策略仅有 v1，无历史版本；"
                     "请使用 Strategy Replay 的候选配置对比。",
                 },
                 "notes": [
-                    "Policy Hit Rate = 命中消息数 / 有策略评估记录的消息数，不是策略准确率。",
-                    "Precision/Recall/F1 需要标注数据；请使用回放评估页查看离线模拟指标。",
+                    "Policy Hit Rate = 该策略命中消息数 / 有策略评估记录的消息数，不是策略准确率。",
+                    "自动执行比例与人工审核比例按该策略自身命中的消息计算，分母是该策略命中数。",
+                    "Precision/Recall/F1 需按策略单独计算；无标注覆盖时显示不可计算，"
+                    "请使用回放评估页查看离线模拟指标。",
                     "命中计数为累计快照，无时间序列，不可直接解读为趋势。",
+                    "策略效果必须同时看命中数、误杀风险、漏判风险与人工审核负载，"
+                    "任一单项不能代表治理效果。",
                 ],
             }
         )

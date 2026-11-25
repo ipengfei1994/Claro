@@ -17,3 +17,4 @@ data/
 models/
 deploy/**/runtime/
 runtime/
+.workbuddy/

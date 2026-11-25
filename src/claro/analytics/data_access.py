@@ -97,6 +97,14 @@ class AnalyticsRepository:
     def policy_hits(self, filters: AnalyticsFilters) -> list[dict[str, Any]]:
         return self._all(q.SQL_POLICY_HITS, filters.params())
 
+    def policy_quality(self, filters: AnalyticsFilters) -> list[dict[str, Any]]:
+        """Per-policy identification quality against the synthetic ground truth."""
+        return self._all(q.SQL_POLICY_QUALITY, filters.params())
+
+    def detection_quality(self, filters: AnalyticsFilters) -> dict[str, Any]:
+        """Detection-layer confusion matrix against the synthetic ground truth."""
+        return self._one(q.SQL_DETECTION_QUALITY, filters.params())
+
     def policy_evaluation_actions(self, filters: AnalyticsFilters) -> list[dict[str, Any]]:
         return self._all(q.SQL_POLICY_EVALUATION_ACTIONS, filters.params())
 

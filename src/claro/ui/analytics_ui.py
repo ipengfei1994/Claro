@@ -91,12 +91,17 @@ def empty_state(message: str) -> None:
 
 
 def metric_row(metrics: dict[str, Any], keys: list[tuple[str, str]]) -> None:
-    """Render a row of metrics with explicit missing-value handling."""
+    """Render a row of metrics with explicit missing-value handling.
+
+    A gated rate may arrive as a dictionary carrying its numerator, denominator
+    and sample size; when its value is unavailable it is rendered as an
+    explicit dash rather than a misleading zero.
+    """
     columns = st.columns(len(keys))
     for column, (label, key) in zip(columns, keys, strict=False):
         value = metrics.get(key)
         if isinstance(value, dict):
-            value = value.get("risk_rate")
+            value = value.get("value", value.get("risk_rate"))
         column.metric(label, "—" if value is None else value)
 
 

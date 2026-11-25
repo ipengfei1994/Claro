@@ -71,7 +71,7 @@ def test_data_quality_queries_report_no_foreign_key_orphans(
         check for check in quality["checks"] if check["severity"] == "error"
     ]
     assert all(check["passed"] for check in error_checks)
-    assert quality["definition_version"] == "phase-05.1"
+    assert quality["definition_version"] == "phase-05.2"
 
 
 def test_governance_and_model_queries_execute_with_explicit_limits(
@@ -86,3 +86,99 @@ def test_governance_and_model_queries_execute_with_explicit_limits(
     assert model["runs"]
     assert model["observed_confusion"]["samples"] <= 7
     assert model["model_human_agreement"]["available"] is False
+
+
+def test_join_does_not_inflate_message_counts(full_container: AppContainer) -> None:
+    """One-to-many joins must not multiply the headline counts.
+
+    The message-level metrics are recomputed with EXISTS/IN subqueries, which
+    cannot fan out, and the results must be identical to the JOIN-based
+    scoped CTE used by the production queries.
+    """
+    service = AnalyticsService(full_container.analytics_repository)
+    kpis = service.overview(_filters())["kpis"]
+
+    with full_container.engine.connect() as connection:
+        window = (
+            "m.occurred_at >= '2026-01-01' AND m.occurred_at < '2026-03-01' "
+            f"AND d.name = '{PRIMARY_DATASET_NAME}'"
+        )
+        total = connection.execute(
+            text(
+                "SELECT COUNT(*) FROM message m JOIN dataset d ON d.id = m.dataset_id "
+                f"WHERE {window}"
+            )
+        ).scalar_one()
+        risk_exists = connection.execute(
+            text(
+                "SELECT COUNT(*) FROM message m JOIN dataset d ON d.id = m.dataset_id "
+                f"WHERE {window} AND EXISTS "
+                "(SELECT 1 FROM risk_event re WHERE re.message_id = m.id)"
+            )
+        ).scalar_one()
+        risk_in = connection.execute(
+            text(
+                "SELECT COUNT(*) FROM message m JOIN dataset d ON d.id = m.dataset_id "
+                f"WHERE {window} AND m.id IN (SELECT message_id FROM risk_event)"
+            )
+        ).scalar_one()
+
+    assert kpis["total_messages"] == total
+    assert kpis["risk_messages"] == risk_exists == risk_in
+    assert kpis["risk_rate"]["risk_rate"] == round(risk_exists / total, 6)
+
+
+def test_detection_quality_has_a_full_window_baseline(full_container: AppContainer) -> None:
+    """Detection-layer false-positive and false-negative rates must be computable."""
+    service = AnalyticsService(full_container.analytics_repository)
+    overview = service.overview(_filters())
+    kpis = overview["kpis"]
+    assert kpis["detection_sample_size"] == kpis["total_messages"]
+    assert kpis["false_positive_rate"] is not None
+    assert kpis["false_negative_rate"] is not None
+    assert 0.0 <= kpis["false_positive_rate"] <= 1.0
+    assert 0.0 <= kpis["false_negative_rate"] <= 1.0
+
+    # The confusion matrix must add up to the sample size.
+    detection = service.governance(_filters())["detection_confusion"]
+    assert (
+        detection["true_positives"]
+        + detection["false_positives"]
+        + detection["false_negatives"]
+        + detection["true_negatives"]
+        == detection["samples"]
+    )
+
+
+def test_policy_rates_use_per_policy_denominators(full_container: AppContainer) -> None:
+    """A scope-wide constant broadcast onto every policy row is not a metric."""
+    strategy = AnalyticsService(full_container.analytics_repository).strategy(_filters())
+    policies = [row for row in strategy["policies"] if row["replay_hit_messages"] > 0]
+    assert policies
+    automatic_denominators = {
+        row["automatic_action_rate"]["denominator"] for row in policies
+    }
+    # Each policy is scored against its own hit count, so the denominators
+    # must differ whenever the policies hit different numbers of messages.
+    assert automatic_denominators <= {row["replay_hit_messages"] for row in policies}
+    for row in policies:
+        assert row["automatic_action_rate"]["denominator"] == row["replay_hit_messages"]
+        assert row["manual_review_rate"]["denominator"] == row["replay_hit_messages"]
+
+
+def test_low_sample_governance_ratios_are_not_published_as_values(
+    full_container: AppContainer,
+) -> None:
+    """A ratio built from a handful of decisions must be unavailable, not 0.0."""
+    service = AnalyticsService(full_container.analytics_repository)
+    governance = service.governance(_filters())
+    decisions = governance["decisions"]
+    if decisions["eligible_finalized"] < 30:
+        assert decisions["automatic_handling_rate"] is None
+        assert decisions["automatic_handling_rate_detail"]["low_sample"] is True
+        assert decisions["automatic_handling_rate_detail"]["sample_size"] == (
+            decisions["eligible_finalized"]
+        )
+    # The observed confusion slice is small and must be flagged.
+    assert governance["observed_confusion"]["low_sample"] is True
+    assert governance["observed_confusion"]["interpretable"] is False
