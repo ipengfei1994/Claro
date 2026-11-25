@@ -167,7 +167,7 @@ Executed / Verified。
 - 启动：
 
 ```powershell
-cd D:\桌面\Claro
+cd <repo-root>
 .\scripts\check_environment.ps1
 .\scripts\start_services.ps1
 .\scripts\check_services.ps1

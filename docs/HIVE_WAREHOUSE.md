@@ -64,9 +64,9 @@ runtime/warehouse/
 .\warehouse\hive\run_warehouse.ps1 `
   -JdbcUrl "jdbc:hive2://127.0.0.1:10000/default" `
   -WarehouseRoot "file:///D:/claro-warehouse" `
-  -OdsRoot "file:///D:/Claro/runtime/warehouse" `
-  -BeelinePath "D:\apache-hive\bin\beeline.cmd" `
-  -ExportDirectory "D:\Claro\runtime\warehouse"
+  -OdsRoot "file:///D:/claro/runtime/warehouse" `
+  -BeelinePath "C:\apache-hive\bin\beeline.cmd" `
+  -ExportDirectory "D:\claro\runtime\warehouse"
 ```
 
 脚本按顺序执行 create databases、create ODS、load ODS、build DWD、build DWS/ADS、data quality。任一脚本非零退出立即失败。

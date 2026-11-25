@@ -13,7 +13,7 @@
 ## 2. 安装与检查
 
 ```powershell
-cd D:\桌面\Claro
+cd <repo-root>
 .\scripts\claro.ps1 install
 .\scripts\check_environment.ps1
 ```
