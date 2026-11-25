@@ -161,14 +161,29 @@ PostgreSQL 快照导出及生成的 Hive `LOAD DATA` SQL 已真实执行；它�
 - 语义检测与真实 LLM 端点未实现/未验证；LLM 启用需要外部兼容端点。
 - 尚无认证/RBAC、生产级 Kafka HA、完整人工审核业务页面、策略决策与执法执行。
 
-## 6. 下一步
+## 6. Phase 05 分步状态
 
-Phase 03 到此结束。建议 Phase 04 处理：
+| 步骤 | 状态 | 证据 |
+|---|---|---|
+| Phase 01–04 集成审查 | Executed | `docs/PHASE_05_INTEGRATION_AUDIT.md` |
+| 分析数据模型 | Implemented | `docs/ANALYTICS_DATA_MODEL.md` |
+| 数据质量检查 | Implemented / Executed | `docs/ANALYTICS_DATA_QUALITY.md` |
+| KPI 统一定义 | Implemented | `docs/KPI_DEFINITIONS.md` |
+| SQL 分析层 | Implemented / Executed | 27 条具名 SQL 在 PostgreSQL 18.3 上真实执行 |
+| Risk / Community / Governance / Model 分析 | Implemented / Tested | 14 项 Phase 05 单元测试 |
+| Strategy Evaluation 与隔离回放 | Implemented / Executed | 300 样本回放；正式表行数不变 |
+| Hive 离线数仓 | **Blocked** | 无原生 Hive/Beeline；ADS 仅 Designed |
+| Streamlit 分析页面 | Implemented / Tested | 6/6 页面 AppTest 渲染通过 |
+| 报告导出 | Implemented / Executed | Markdown + CSV；5 类报告 |
+| 测试与文档 | Executed | 230 单元 + 38 集成通过；Ruff 通过 |
 
-1. 从 `risk_result` 生成策略决策并持久化 `policy_decision`。
-2. 人工审核队列与工单状态流转，接入 `moderation_case`。
-3. 执法动作与反馈闭环。
-4. 风险监控与历史分析 UI，仅调用应用层查询。
-5. 在真实 Hive 可用时执行已实现的数仓 SQL；在此之前保持“未执行”标记。
+详细结果见 `docs/PHASE_05_TEST_REPORT.md` 与 `docs/PHASE_05_COMPLETION_REPORT.md`。
 
-旧 schema Kafka 历史消息与 Hive 原生可行性仍应作为前置清理项处理。
+## 7. 下一步（Phase 06 建议，未开始）
+
+1. 补充 `moderation_review` 与 `governance_feedback` 数据，启用人工一致性及线上误杀/漏判分析。
+2. 积累策略多版本后再启用真实版本效果对比。
+3. 在真实 Hive 引擎可用时执行 ADS SQL 并完成离线/在线对账。
+4. 提升 `risk_result` 覆盖率，使模型运行指标能代表全量消息。
+
+旧 schema Kafka 历史消息与 Hive 原生可行性仍应作为前置清理项处理。Phase 05 到此停止，不自动开始 Phase 06。

@@ -2,7 +2,7 @@
 
 **Everything under control.**
 
-Claro 是面向 SLG 场景的本地优先内容安全与风险治理平台。当前已实现 **Phase 02：数据工程**、**Phase 03：风险智能引擎** 与 **Phase 04：内容治理**，包括可重复合成数据、PostgreSQL 持久化、Kafka 生产/消费链路、Redis 业务缓存、Hive 分层 SQL、分层风险检测（规则 + ML）、风险融合与解释、模型评估与风险事件发布，以及策略中心、策略评估、治理决策、人工审核、模拟处置、反馈与审计的完整治理闭环。
+Claro 是面向 SLG 场景的本地优先内容安全与风险治理平台。当前已实现 **Phase 02：数据工程**、**Phase 03：风险智能引擎**、**Phase 04：内容治理** 与 **Phase 05：数据分析与策略效果评估**，包括可重复合成数据、PostgreSQL 持久化、Kafka 生产/消费链路、Redis 业务缓存、Hive 分层 SQL、分层风险检测（规则 + ML）、风险融合与解释、模型评估与风险事件发布、策略中心与治理闭环，以及统一 KPI 口径、风险/社区/治理/模型分析、隔离策略回放、分析报告导出与六个分析页面。
 
 ## 验收状态
 
@@ -30,9 +30,12 @@ Claro 是面向 SLG 场景的本地优先内容安全与风险治理平台。当
 | 反馈与审计 | 误杀/漏判与错误案例、原始模型结果对照、追加式审计日志、全链路 Trace |
 | 治理事件流 | Outbox Pattern，6 类治理 Topic，真实 Kafka 发布验证（137 条事件 0 失败） |
 | 治理 UI | 六个页面：总览、Policy Center、Moderation Workbench、Governance Decisions、Enforcement Center、Feedback & Audit；真实浏览器渲染验证 |
-| 自动化 | **216 个单元测试通过，25 个真实集成测试通过**；Ruff 通过；6/6 UI 页面冒烟通过 |
+| 自动化 | **230 个单元测试通过，38 个真实集成测试通过**；Ruff 通过；6/6 治理 UI 页面 + 6/6 分析页面渲染通过 |
+| Phase 05 分析层 | 27 条具名 SQL 在 PostgreSQL 真实执行；KPI 口径单一来源；数据质量检查通过 |
+| Phase 05 回放 | 300 样本策略回放实际执行 23 处动作变化；正式决策与处置表行数不变 |
+| Phase 05 报告 | 五类报告 Markdown + CSV 导出真实执行；Excel/PDF 未实现（无依赖） |
 
-Hive 阻塞原因：当前 Windows 环境未安装原生 Hive、Hadoop 或 Beeline。不得将该部分标记为运行验证。语义检测器当前为显式不可用占位；LLM 顾问层默认关闭，未对真实端点验证。
+Hive 阻塞原因：当前 Windows 环境未安装原生 Hive、Hadoop 或 Beeline。不得将该部分标记为运行验证。语义检测器当前为显式不可用占位；LLM 顾问层默认关闭，未对真实端点验证。Phase 05 的 `moderation_review` 与 `governance_feedback` 为空，人工一致性及线上误杀/漏判不可计算；所有策略仅 v1，历史版本对比不可用。
 
 ## 原生环境快速开始
 
@@ -138,6 +141,24 @@ cd D:\桌面\Claro
 .\.venv\Scripts\python.exe -m claro serve
 ```
 
+## Phase 05 分析命令
+
+```powershell
+# 分析 KPI（全部来自 PostgreSQL 真实查询）
+.\.venv\Scripts\python.exe -m claro analytics-overview --days 365
+.\.venv\Scripts\python.exe -m claro analytics-risk --grain day
+.\.venv\Scripts\python.exe -m claro analytics-community --limit 100
+.\.venv\Scripts\python.exe -m claro analytics-governance
+.\.venv\Scripts\python.exe -m claro analytics-model
+.\.venv\Scripts\python.exe -m claro analytics-strategy
+.\.venv\Scripts\python.exe -m claro analytics-quality
+
+# 报告与隔离策略回放
+.\.venv\Scripts\python.exe -m claro analytics-report --type daily_risk --output-dir runtime\reports
+.\.venv\Scripts\python.exe -m claro strategy-replay --sample-limit 300 `
+  --action-override gov-critical-risk-review=block --candidate-label "critical→block"
+```
+
 默认原始主题中保留了 Phase 02 早期 12 条旧 schema 冒烟消息。默认业务 Group 尚未消费它们；直接以 `earliest` 启动会把其路由到 DLQ。验收应使用新主题或明确处理这批历史消息。
 
 ## 配置
@@ -179,6 +200,18 @@ CLARO_UI__THEME=system
 - [治理数据模型](docs/GOVERNANCE_DATA_MODEL.md)
 - [Phase 04 测试报告](docs/PHASE_04_TEST_REPORT.md)
 - [Phase 04 完成报告](docs/PHASE_04_COMPLETION_REPORT.md)
+- [Phase 05 集成审查](docs/PHASE_05_INTEGRATION_AUDIT.md)
+- [分析架构](docs/ANALYTICS_ARCHITECTURE.md)
+- [分析数据模型](docs/ANALYTICS_DATA_MODEL.md)
+- [分析数据质量](docs/ANALYTICS_DATA_QUALITY.md)
+- [KPI 统一口径](docs/KPI_DEFINITIONS.md)
+- [风险分析](docs/RISK_ANALYTICS.md)
+- [治理分析](docs/GOVERNANCE_ANALYTICS.md)
+- [模型表现分析](docs/MODEL_PERFORMANCE_ANALYTICS.md)
+- [策略评估](docs/STRATEGY_EVALUATION.md)
+- [Hive 离线分析状态](docs/HIVE_OFFLINE_ANALYTICS.md)
+- [Phase 05 测试报告](docs/PHASE_05_TEST_REPORT.md)
+- [Phase 05 完成报告](docs/PHASE_05_COMPLETION_REPORT.md)
 
 ## 当前阶段边界
 
@@ -188,3 +221,5 @@ CLARO_UI__THEME=system
 - 模型指标来自合成模板数据，不代表真实游戏文本准确率。
 - 所有治理处置均为平台内部模拟，不连接真实游戏服务器。
 - UI 身份为模拟身份，鉴权/RBAC 与生产级高可用尚未实现。
+- 分析层中人工审核标签、反馈标注与策略多版本历史缺失，相应指标标记为不可计算。
+- Excel/PDF 报告导出未实现；仅提供 Markdown 与 CSV。

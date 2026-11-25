@@ -11,6 +11,12 @@ from claro.bootstrap import AppContainer
 from claro.config.settings import load_settings
 from claro.ui.common import get_container, render_flash, render_sidebar_identity
 from claro.ui.pages import (
+    analytics_community,
+    analytics_governance,
+    analytics_model,
+    analytics_overview,
+    analytics_risk,
+    analytics_strategy,
     enforcement_center,
     feedback_audit,
     governance_decisions,
@@ -27,6 +33,12 @@ PAGES: dict[str, Callable[[AppContainer], None]] = {
     "Governance Decisions": governance_decisions.render,
     "Enforcement Center": enforcement_center.render,
     "Feedback & Audit": feedback_audit.render,
+    "分析 · 总览": analytics_overview.render,
+    "分析 · 风险": analytics_risk.render,
+    "分析 · 社区": analytics_community.render,
+    "分析 · 治理": analytics_governance.render,
+    "分析 · 模型": analytics_model.render,
+    "分析 · 策略评估": analytics_strategy.render,
 }
 
 

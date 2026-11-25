@@ -224,6 +224,63 @@ def build_parser() -> argparse.ArgumentParser:
     governance_expire.add_argument("--limit", type=int, default=500)
     governance_expire.add_argument("--output", type=Path)
 
+    for name, help_text in (
+        ("analytics-overview", "show Phase 05 overview KPIs"),
+        ("analytics-risk", "show risk trend, categories and severity"),
+        ("analytics-community", "show server, alliance and player analytics"),
+        ("analytics-governance", "show governance, moderation and enforcement analytics"),
+        ("analytics-model", "show persisted model performance"),
+        ("analytics-strategy", "show historical policy performance"),
+        ("analytics-quality", "run analytical data-quality checks"),
+    ):
+        parser_item = subparsers.add_parser(name, help=help_text)
+        parser_item.add_argument("--days", type=int, default=365)
+        parser_item.add_argument("--dataset", help="dataset name; defaults to all datasets")
+        parser_item.add_argument("--output", type=Path)
+        if name == "analytics-risk":
+            parser_item.add_argument(
+                "--grain", choices=("hour", "day", "week", "month"), default="day"
+            )
+        if name == "analytics-community":
+            parser_item.add_argument("--limit", type=int, default=100)
+
+    report_parser = subparsers.add_parser(
+        "analytics-report", help="generate an analytical report with CSV tables"
+    )
+    report_parser.add_argument(
+        "--type",
+        choices=(
+            "daily_risk",
+            "weekly_risk",
+            "governance_performance",
+            "policy_evaluation",
+            "model_performance",
+        ),
+        default="daily_risk",
+    )
+    report_parser.add_argument("--days", type=int, default=1)
+    report_parser.add_argument("--dataset", help="dataset name; defaults to all datasets")
+    report_parser.add_argument("--output-dir", type=Path, default=Path("runtime/reports"))
+
+    replay_parser = subparsers.add_parser(
+        "strategy-replay", help="run an isolated strategy replay on historical messages"
+    )
+    replay_parser.add_argument("--days", type=int, default=365)
+    replay_parser.add_argument("--dataset", help="dataset name; defaults to all datasets")
+    replay_parser.add_argument("--sample-limit", type=int, default=500)
+    replay_parser.add_argument(
+        "--action-override",
+        nargs="*",
+        default=[],
+        metavar="POLICY=ACTION",
+        help="override a policy action in the candidate set",
+    )
+    replay_parser.add_argument(
+        "--disabled", nargs="*", default=[], metavar="POLICY", help="disable policies in candidate"
+    )
+    replay_parser.add_argument("--candidate-label", default="candidate")
+    replay_parser.add_argument("--output", type=Path)
+
     subparsers.add_parser("serve", help="start the Streamlit operations interface")
     return parser
 
@@ -598,6 +655,63 @@ def _governance_container() -> Iterator[Any]:
         yield container
     finally:
         container.close()
+
+
+def _analytics_filters(args: argparse.Namespace) -> Any:
+    from claro.analytics.reports import default_filters
+
+    return default_filters(days=args.days, dataset_name=getattr(args, "dataset", None))
+
+
+def _run_analytics_command(args: argparse.Namespace) -> dict[str, Any]:
+    from claro.analytics.reports import REPORT_TYPES, ReportService
+
+    with _governance_container() as container:
+        service = container.analytics_service
+        if service is None:
+            raise RuntimeError("analytics service is not available")
+        filters = _analytics_filters(args)
+        command = args.command
+        if command == "analytics-overview":
+            return service.overview(filters)
+        if command == "analytics-risk":
+            return service.risk(filters, args.grain)
+        if command == "analytics-community":
+            return service.community(filters, limit=args.limit)
+        if command == "analytics-governance":
+            return service.governance(filters)
+        if command == "analytics-model":
+            return service.model(filters)
+        if command == "analytics-strategy":
+            return service.strategy(filters)
+        if command == "analytics-quality":
+            return service.quality()
+        if command == "analytics-report":
+            if args.type not in REPORT_TYPES:
+                raise ValueError(f"unsupported report type: {args.type}")
+            replay_service = container.strategy_replay_service
+            report = ReportService(service, replay_service).generate(args.type, filters)
+            files = ReportService(service, replay_service).export(report, args.output_dir)
+            return {
+                "report_type": args.type,
+                "executive_summary": report["executive_summary"],
+                "files": [str(path) for path in files],
+            }
+        if command == "strategy-replay":
+            replay_service = container.strategy_replay_service
+            if replay_service is None:
+                raise RuntimeError("strategy replay service is not available")
+            candidate = {
+                "action_overrides": dict(
+                    item.split("=", 1) for item in args.action_override if "=" in item
+                ),
+                "disabled_policies": list(args.disabled),
+                "candidate_label": args.candidate_label,
+            }
+            return replay_service.run(
+                filters, candidate, sample_limit=args.sample_limit, executed_by="cli"
+            )
+        raise ValueError(f"unsupported analytics command: {command}")
 
 
 def _governance_message_uuid(raw: str) -> Any:
@@ -1115,6 +1229,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             configure_logging(load_settings())
             _print_json(_run_governance_expire(args), args.output)
+            return 0
+        if args.command.startswith("analytics-") or args.command == "strategy-replay":
+            from claro.infrastructure.logging import configure_logging
+
+            configure_logging(load_settings())
+            _print_json(_run_analytics_command(args), getattr(args, "output", None))
             return 0
         if args.command == "serve":
             from claro.ui.app import run

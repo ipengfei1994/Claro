@@ -1021,3 +1021,53 @@ class AuditEvent(UUIDPrimaryKeyMixin, Base):
     before_state: Mapped[dict[str, Any] | None] = mapped_column(portable_jsonb(), nullable=True)
     after_state: Mapped[dict[str, Any] | None] = mapped_column(portable_jsonb(), nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class AnalyticsReplayRun(Base):
+    """Immutable metadata for an isolated strategy replay execution."""
+
+    __tablename__ = "analytics_replay_run"
+    __table_args__ = (Index("ix_analytics_replay_run_created", "created_at"),)
+
+    run_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utc_now)
+    dataset_name: Mapped[str] = mapped_column(String(191), nullable=False)
+    window_start: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    window_end: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    baseline_label: Mapped[str] = mapped_column(String(191), nullable=False)
+    candidate_label: Mapped[str] = mapped_column(String(191), nullable=False)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    definition_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    parameters: Mapped[dict[str, Any]] = mapped_column(portable_jsonb(), nullable=False)
+    simulation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    executed_by: Mapped[str] = mapped_column(String(191), nullable=False)
+
+
+class AnalyticsReplayCase(Base):
+    """Per-message baseline vs candidate decision produced by a replay run."""
+
+    __tablename__ = "analytics_replay_case"
+    __table_args__ = (
+        UniqueConstraint("run_id", "message_id", name="uq_analytics_replay_case_run_message"),
+        Index("ix_analytics_replay_case_run", "run_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("analytics_replay_run.run_id", ondelete="CASCADE"), nullable=False
+    )
+    message_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    baseline_hit: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    candidate_hit: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    baseline_action: Mapped[str] = mapped_column(String(32), nullable=False)
+    candidate_action: Mapped[str] = mapped_column(String(32), nullable=False)
+    baseline_policy_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    candidate_policy_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    diff_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    truth_label: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    baseline_fp: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    baseline_fn: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    candidate_fp: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    candidate_fn: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    risk_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    input_snapshot: Mapped[dict[str, Any]] = mapped_column(portable_jsonb(), nullable=False)

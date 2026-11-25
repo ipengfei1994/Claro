@@ -6,6 +6,9 @@ from typing import cast
 from sqlalchemy import Engine
 from sqlalchemy.orm import sessionmaker
 
+from claro.analytics.data_access import AnalyticsRepository
+from claro.analytics.services import AnalyticsService
+from claro.analytics.strategy import StrategyReplayService
 from claro.application.enforcement_service import EnforcementService
 from claro.application.events import EventEnvelope
 from claro.application.feedback_audit_service import FeedbackAuditService
@@ -55,6 +58,9 @@ class AppContainer:
     moderation_service: ModerationService | None = None
     enforcement_service: EnforcementService | None = None
     feedback_audit_service: FeedbackAuditService | None = None
+    analytics_repository: AnalyticsRepository | None = None
+    analytics_service: AnalyticsService | None = None
+    strategy_replay_service: StrategyReplayService | None = None
 
     def verify_connections(self) -> None:
         results = self.health_service.check_all()
@@ -161,6 +167,11 @@ def create_app_container(settings: ClaroSettings | None = None) -> AppContainer:
         else None
     )
     feedback_audit_service = FeedbackAuditService(governance_repository)
+    analytics_repository = AnalyticsRepository(engine)
+    analytics_service = AnalyticsService(analytics_repository)
+    strategy_replay_service = StrategyReplayService(
+        analytics_repository, policy_repository, session_factory
+    )
     return AppContainer(
         settings=resolved_settings,
         engine=engine,
@@ -195,5 +206,8 @@ def create_app_container(settings: ClaroSettings | None = None) -> AppContainer:
             governance_repository, cache=governance_cache
         ),
         feedback_audit_service=feedback_audit_service,
+        analytics_repository=analytics_repository,
+        analytics_service=analytics_service,
+        strategy_replay_service=strategy_replay_service,
         health_service=HealthService(registrations),
     )
