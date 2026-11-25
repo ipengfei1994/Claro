@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -45,11 +46,14 @@ def persist_raw_message(
     sent_at: datetime,
     received_at: datetime,
     attempts: int,
+    transport: str = "kafka",
 ) -> IngestionResult:
     if source_partition < 0 or source_offset < 0:
         raise PermanentMessageError("Kafka source partition and offset must not be negative")
     if attempts < 1:
         raise PermanentMessageError("attempts must be positive")
+    if transport not in {"kafka", "direct"}:
+        raise PermanentMessageError(f"unsupported ingestion transport: {transport}")
     if len(payload_hash) != 64:
         raise PermanentMessageError("payload_hash must be a SHA-256 digest")
     for timestamp in (sent_at, received_at):
@@ -67,6 +71,7 @@ def persist_raw_message(
             sent_at=sent_at,
             received_at=received_at,
             attempts=attempts,
+            transport=transport,
         )
 
 
@@ -81,6 +86,7 @@ def _persist_in_session(
     sent_at: datetime,
     received_at: datetime,
     attempts: int,
+    transport: str = "kafka",
 ) -> IngestionResult:
     processed_at = datetime.now(UTC)
     inbox = session.get(InboxEvent, payload.message_id)
@@ -160,7 +166,7 @@ def _persist_in_session(
                 finished_at=processed_at,
                 details={
                     "synthetic": payload.synthetic,
-                    "transport": "kafka",
+                    "transport": transport,
                     "source_topic": source_topic,
                     "source_partition": source_partition,
                     "source_offset": source_offset,
@@ -207,6 +213,42 @@ def _persist_in_session(
     )
     session.flush()
     return IngestionResult("processed", message.id, message.status, processed_at)
+
+
+def ensure_dataset(
+    session_factory: sessionmaker[Session],
+    *,
+    name: str,
+    seed: int,
+    is_synthetic: bool = True,
+    source: str = "direct",
+) -> UUID:
+    """Return the id of a dataset by name, creating it when absent.
+
+    Direct (non-Kafka) callers must agree with the ingestion invariant that one
+    dataset name maps to exactly one id. New datasets get a deterministic
+    UUIDv5 derived from the name, so re-running a demo never produces a
+    conflicting second dataset.
+    """
+    if not name or len(name) > 120:
+        raise PermanentMessageError("dataset name must be 1..120 characters")
+    if seed < 0:
+        raise PermanentMessageError("dataset seed must not be negative")
+    with session_scope(session_factory) as session:
+        existing = session.scalar(select(Dataset).where(Dataset.name == name))
+        if existing is not None:
+            return existing.id
+        identifier = uuid.uuid5(uuid.NAMESPACE_URL, f"claro:dataset:{name}")
+        session.add(
+            Dataset(
+                id=identifier,
+                name=name,
+                seed=seed,
+                generation_params={"synthetic": is_synthetic, "source": source, "seed": seed},
+                is_synthetic=is_synthetic,
+            )
+        )
+        return identifier
 
 
 def _ensure_dataset(session: Session, payload: RawGameMessagePayload) -> Dataset:

@@ -46,7 +46,9 @@ high_risk AS (
 )
 """
 
-SQL_OVERVIEW = SCOPED_CTE + """
+SQL_OVERVIEW = (
+    SCOPED_CTE
+    + """
 SELECT COUNT(DISTINCT s.id) AS total_messages,
        COUNT(DISTINCT r.message_id) AS risk_messages,
        COUNT(DISTINCT h.message_id) AS high_risk_messages,
@@ -59,8 +61,11 @@ FROM scoped s
 LEFT JOIN risk r ON r.message_id = s.id
 LEFT JOIN high_risk h ON h.message_id = s.id
 """
+)
 
-SQL_REPEAT_OFFENDERS = SCOPED_CTE + """
+SQL_REPEAT_OFFENDERS = (
+    SCOPED_CTE
+    + """
 SELECT COUNT(*) AS repeat_offenders
 FROM (
     SELECT s.player_id, COUNT(DISTINCT r.message_id) AS risk_messages
@@ -71,13 +76,16 @@ FROM (
     HAVING COUNT(DISTINCT r.message_id) >= CAST(:repeat_threshold AS int)
 ) offenders
 """
+)
 
 
 def daily_counts_sql(grain: Grain) -> str:
     """Return the time-bucketed message/risk query for a whitelisted grain."""
     if grain not in ("hour", "day", "week", "month"):
         raise ValueError(f"unsupported grain: {grain}")
-    return SCOPED_CTE + f"""
+    return (
+        SCOPED_CTE
+        + f"""
 SELECT date_trunc('{grain}', s.occurred_at) AS bucket,
        COUNT(DISTINCT s.id) AS total_messages,
        COUNT(DISTINCT r.message_id) AS risk_messages,
@@ -88,9 +96,12 @@ LEFT JOIN high_risk h ON h.message_id = s.id
 GROUP BY 1
 ORDER BY 1
 """
+    )
 
 
-SQL_CATEGORY_DISTRIBUTION = SCOPED_CTE + """
+SQL_CATEGORY_DISTRIBUTION = (
+    SCOPED_CTE
+    + """
 SELECT re.category,
        COUNT(DISTINCT re.message_id) AS message_count,
        COUNT(*) AS event_count,
@@ -102,8 +113,11 @@ WHERE (CAST(:risk_category AS text) IS NULL OR re.category = :risk_category)
 GROUP BY re.category
 ORDER BY message_count DESC
 """
+)
 
-SQL_SEVERITY_DISTRIBUTION = SCOPED_CTE.rstrip() + """
+SQL_SEVERITY_DISTRIBUTION = (
+    SCOPED_CTE.rstrip()
+    + """
 , ranked AS (
     SELECT re.message_id, re.severity,
            ROW_NUMBER() OVER (
@@ -123,8 +137,11 @@ WHERE rn = 1
 GROUP BY severity
 ORDER BY message_count DESC
 """
+)
 
-SQL_COOCCURRENCE = SCOPED_CTE + """
+SQL_COOCCURRENCE = (
+    SCOPED_CTE
+    + """
 SELECT a.category AS category_a, b.category AS category_b,
        COUNT(DISTINCT a.message_id) AS message_count
 FROM risk_event a
@@ -135,8 +152,11 @@ WHERE (CAST(:risk_category AS text) IS NULL
 GROUP BY a.category, b.category
 ORDER BY message_count DESC
 """
+)
 
-SQL_SERVER_RANKING = SCOPED_CTE + """
+SQL_SERVER_RANKING = (
+    SCOPED_CTE
+    + """
 , decisions AS (
     SELECT s.server_ref,
            COUNT(*) AS total_decisions,
@@ -169,8 +189,11 @@ GROUP BY s.server_ref, server_name, sv.region,
          d.total_decisions, d.auto_decided, d.review_decisions, d.status_decisions
 ORDER BY risk_messages DESC
 """
+)
 
-SQL_ALLIANCE_RANKING = SCOPED_CTE + """
+SQL_ALLIANCE_RANKING = (
+    SCOPED_CTE
+    + """
 , decisions AS (
     SELECT s.alliance_id,
            COUNT(*) AS total_decisions,
@@ -199,8 +222,11 @@ GROUP BY a.alliance_ref, alliance_name, a.server_ref,
          d.total_decisions, d.auto_decided
 ORDER BY risk_messages DESC
 """
+)
 
-SQL_PLAYER_PROFILE = SCOPED_CTE + """
+SQL_PLAYER_PROFILE = (
+    SCOPED_CTE
+    + """
 , risk_times AS (
     SELECT re.message_id, MAX(re.occurred_at) AS last_risk_at
     FROM risk_event re
@@ -241,8 +267,11 @@ GROUP BY s.sender_ref, d.decision_count, d.restrictive_count, san.sanction_count
 ORDER BY risk_messages DESC, total_messages DESC
 LIMIT :limit
 """
+)
 
-SQL_GOVERNANCE_TOTALS = SCOPED_CTE + """
+SQL_GOVERNANCE_TOTALS = (
+    SCOPED_CTE
+    + """
 SELECT COUNT(*) AS total_decisions,
        COUNT(DISTINCT pd.message_id) AS decided_messages,
        COUNT(*) FILTER (WHERE pd.decision_status IS NOT NULL
@@ -257,8 +286,11 @@ SELECT COUNT(*) AS total_decisions,
 FROM policy_decision pd
 JOIN scoped s ON s.id = pd.message_id
 """
+)
 
-SQL_DECISION_DISTRIBUTION = SCOPED_CTE + """
+SQL_DECISION_DISTRIBUTION = (
+    SCOPED_CTE
+    + """
 SELECT pd.action, COALESCE(pd.decision_status, 'legacy_unset') AS decision_status,
        COUNT(*) AS decision_count,
        COUNT(DISTINCT pd.message_id) AS message_count
@@ -267,8 +299,11 @@ JOIN scoped s ON s.id = pd.message_id
 GROUP BY pd.action, decision_status
 ORDER BY decision_count DESC
 """
+)
 
-SQL_MODERATION_TOTALS = SCOPED_CTE + """
+SQL_MODERATION_TOTALS = (
+    SCOPED_CTE
+    + """
 , reviews AS (
     SELECT mc.id AS case_id,
            COUNT(mr.id) AS review_count,
@@ -299,8 +334,11 @@ FROM moderation_case mc
 JOIN scoped s ON s.id = mc.message_id
 LEFT JOIN reviews rv ON rv.case_id = mc.id
 """
+)
 
-SQL_MODERATION_BY_STATUS = SCOPED_CTE + """
+SQL_MODERATION_BY_STATUS = (
+    SCOPED_CTE
+    + """
 SELECT mc.status, COALESCE(mc.resolution, 'unset') AS resolution, COUNT(*) AS task_count,
        COUNT(*) FILTER (WHERE mc.closed_at IS NOT NULL) AS completed
 FROM moderation_case mc
@@ -308,8 +346,11 @@ JOIN scoped s ON s.id = mc.message_id
 GROUP BY mc.status, resolution
 ORDER BY task_count DESC
 """
+)
 
-SQL_ENFORCEMENT_DISTRIBUTION = SCOPED_CTE + """
+SQL_ENFORCEMENT_DISTRIBUTION = (
+    SCOPED_CTE
+    + """
 SELECT ea.action_type, ea.status, ea.simulated,
        COUNT(*) AS action_count,
        COUNT(DISTINCT ea.target_ref) AS target_count,
@@ -325,6 +366,7 @@ LEFT JOIN risk_event re ON re.message_id = pd.message_id
 GROUP BY ea.action_type, ea.status, ea.simulated
 ORDER BY action_count DESC
 """
+)
 
 SQL_MODEL_RUNS = """
 SELECT er.id AS run_id, er.model_id, er.dataset_name, er.split, er.message_count,
@@ -337,7 +379,9 @@ WHERE (CAST(:model_id AS text) IS NULL OR er.model_id = :model_id)
 ORDER BY er.created_at DESC
 """
 
-SQL_MODEL_ERROR_CASES = SCOPED_CTE + """
+SQL_MODEL_ERROR_CASES = (
+    SCOPED_CTE
+    + """
 SELECT ec.error_type, COALESCE(ec.category, 'unspecified') AS category,
        ec.truth_label, COUNT(*) AS case_count,
        AVG(ec.predicted_score) AS avg_predicted_score
@@ -347,8 +391,11 @@ WHERE (CAST(:risk_category AS text) IS NULL OR ec.category = :risk_category)
 GROUP BY ec.error_type, category, ec.truth_label
 ORDER BY case_count DESC
 """
+)
 
-SQL_OBSERVED_RISK_VS_LABEL = SCOPED_CTE + """
+SQL_OBSERVED_RISK_VS_LABEL = (
+    SCOPED_CTE
+    + """
 SELECT rr.message_id, rr.risk_score, rr.risk_level, rr.categories, rr.detected_at,
        ml.label AS truth_label, ml.risk_category AS truth_category, ml.split
 FROM risk_result rr
@@ -356,8 +403,11 @@ JOIN scoped s ON s.id = rr.message_id
 LEFT JOIN message_label ml ON ml.message_id = rr.message_id
 ORDER BY rr.detected_at DESC
 """
+)
 
-SQL_DETECTION_QUALITY = SCOPED_CTE + """
+SQL_DETECTION_QUALITY = (
+    SCOPED_CTE
+    + """
 , detection AS (
     SELECT DISTINCT re.message_id
     FROM risk_event re
@@ -379,8 +429,11 @@ FROM scoped s
 JOIN truth t ON t.message_id = s.id
 LEFT JOIN detection d ON d.message_id = s.id
 """
+)
 
-SQL_POLICY_HITS = SCOPED_CTE + """
+SQL_POLICY_HITS = (
+    SCOPED_CTE
+    + """
 , hits AS (
     SELECT pe.message_id, hit.item ->> 'policy_key' AS policy_key,
            (hit.item ->> 'version')::int AS policy_version,
@@ -424,8 +477,11 @@ WHERE (CAST(:policy_key AS text) IS NULL OR p.policy_key = :policy_key)
   AND p.version > 0
 ORDER BY replay_hit_messages DESC, cumulative_hit_count DESC
 """
+)
 
-SQL_POLICY_QUALITY = SCOPED_CTE + """
+SQL_POLICY_QUALITY = (
+    SCOPED_CTE
+    + """
 , hits AS (
     SELECT pe.message_id, hit.item ->> 'policy_key' AS policy_key,
            hit.item ->> 'action' AS action
@@ -457,9 +513,12 @@ WHERE (CAST(:policy_key AS text) IS NULL OR h.policy_key = :policy_key)
 GROUP BY h.policy_key
 ORDER BY hit_messages DESC
 """
+)
 
 
-SQL_POLICY_EVALUATION_ACTIONS = SCOPED_CTE + """
+SQL_POLICY_EVALUATION_ACTIONS = (
+    SCOPED_CTE
+    + """
 SELECT pe.suggested_action,
        COUNT(DISTINCT pe.message_id) AS message_count,
        COUNT(*) AS evaluation_count,
@@ -470,8 +529,11 @@ LEFT JOIN policy_decision pd ON pd.policy_evaluation_id = pe.id
 GROUP BY pe.suggested_action
 ORDER BY message_count DESC
 """
+)
 
-SQL_REPLAY_INPUT = SCOPED_CTE.rstrip() + """
+SQL_REPLAY_INPUT = (
+    SCOPED_CTE.rstrip()
+    + """
 , latest_risk AS (
     SELECT DISTINCT ON (re.message_id)
            re.message_id, re.category, re.risk_score, re.severity, re.confidence
@@ -493,6 +555,7 @@ LEFT JOIN message_label ml ON ml.message_id = s.id
 ORDER BY s.id
 LIMIT :limit
 """
+)
 
 SQL_REPLAY_RUNS = """
 SELECT run_id, created_at, dataset_name, window_start, window_end, baseline_label,

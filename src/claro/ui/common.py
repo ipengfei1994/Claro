@@ -14,7 +14,7 @@ from typing import Any
 import streamlit as st
 
 from claro.bootstrap import AppContainer, create_app_container
-from claro.ui.theme import badge  # re-exported for page use
+from claro.ui.theme import badge, empty_state, section  # re-exported for page use
 
 # --- Simulated identities -------------------------------------------------
 # Single-machine demos switch reviewer identity through this list. This is
@@ -108,6 +108,44 @@ TARGET_TYPE_LABELS: dict[str, str] = {
     "player_server": "玩家(服务器内)",
 }
 
+CATEGORY_LABELS: dict[str, str] = {
+    "spam": "垃圾广告",
+    "fraud": "欺诈诱导",
+    "harassment": "骚扰辱骂",
+    "hate_speech": "仇恨言论",
+    "self_harm": "自伤风险",
+    "sexual_content": "色情内容",
+    "violence": "暴力内容",
+    "advertising": "广告导流",
+    "external_diversion": "站外导流",
+    "privacy": "隐私泄露",
+    "politics": "涉政敏感",
+    "other": "其他",
+    "normal": "正常",
+}
+
+STAGE_LABELS: dict[str, str] = {
+    "validate": "校验",
+    "ingestion": "入库",
+    "preprocessing": "预处理",
+    "detection": "检测",
+    "policy": "策略裁决",
+    "governance": "治理决策",
+    "moderation": "人工审核",
+    "enforcement": "处置执行",
+    "publish": "事件发布",
+}
+
+DETECTOR_LABELS: dict[str, str] = {
+    "rule.keyword": "关键词规则",
+    "rule.regex": "正则规则",
+    "rule.blacklist": "黑名单规则",
+    "rule.url_pattern": "外链规则",
+    "ml.logistic_regression": "逻辑回归模型",
+    "synthetic-keyword": "合成关键词器",
+    "synthetic-rule-engine": "合成规则引擎",
+}
+
 
 @st.cache_resource(show_spinner="正在连接 Claro 服务...")
 def get_container() -> AppContainer:
@@ -175,18 +213,10 @@ def require(service: Any, name: str) -> Any:
 
 # --- Formatting helpers ---------------------------------------------------
 def fmt_dt(value: Any) -> str:
-    if not value:
-        return "—"
-    if isinstance(value, datetime):
-        moment = value
-    else:
-        try:
-            moment = datetime.fromisoformat(str(value))
-        except ValueError:
-            return str(value)
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=UTC)
-    return moment.astimezone().strftime("%Y-%m-%d %H:%M")
+    moment = _to_local(value)
+    if moment is None:
+        return "—" if not value else str(value)
+    return moment.strftime("%Y-%m-%d %H:%M")
 
 
 def fmt_score(value: Any, digits: int = 4) -> str:
@@ -240,3 +270,187 @@ def severity_badge(level: Any) -> str:
 
 def status_badge(status: Any) -> str:
     return badge(status_text(status), status=str(status or "").lower())
+
+
+def category_text(category: Any) -> str:
+    key = str(category or "").lower()
+    return CATEGORY_LABELS.get(key, str(category) if category else "—")
+
+
+def detector_text(detector: Any) -> str:
+    key = str(detector or "")
+    return DETECTOR_LABELS.get(key, key or "—")
+
+
+def stage_text(stage: Any) -> str:
+    key = str(stage or "").lower()
+    return STAGE_LABELS.get(key, str(stage) if stage else "—")
+
+
+def category_badge(category: Any) -> str:
+    return badge(category_text(category), category=str(category or "").lower())
+
+
+# --- Numbers and time -----------------------------------------------------
+def fmt_int(value: Any) -> str:
+    """Thousands-separated integer, or an em dash when the value is missing."""
+    if value is None or value == "":
+        return "—"
+    try:
+        return f"{int(value):,}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def fmt_pct(value: Any, digits: int = 1) -> str:
+    """Format a 0..1 ratio as a percentage.
+
+    Rate helpers in the analytics layer return a dictionary envelope; the ratio
+    is unwrapped here so no page has to know that detail.
+    """
+    if isinstance(value, dict):
+        value = value.get("risk_rate", value.get("value"))
+    if value is None or value == "":
+        return "—"
+    try:
+        return f"{float(value) * 100:.{digits}f}%"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def ratio_display(detail: dict[str, Any] | None, digits: int = 1) -> tuple[str, str]:
+    """Return ``(value, hint)`` for a gated rate, keeping low-sample honesty."""
+    if not detail:
+        return "—", "暂无数据"
+    value = detail.get("value")
+    denominator = fmt_int(detail.get("denominator"))
+    if value is None:
+        return "不可计算", f"样本量 {denominator} 不足，已抑制"
+    return fmt_pct(value, digits), f"n = {denominator}"
+
+
+def fmt_relative(value: Any) -> str:
+    """Human relative time (刚刚 / 3 分钟前 / 2 天前) in local time."""
+    moment = _to_local(value)
+    if moment is None:
+        return "—"
+    delta = datetime.now(UTC) - moment
+    seconds = delta.total_seconds()
+    if seconds < 0:
+        return moment.strftime("%m-%d %H:%M")
+    if seconds < 60:
+        return "刚刚"
+    if seconds < 3600:
+        return f"{int(seconds // 60)} 分钟前"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)} 小时前"
+    if seconds < 86400 * 30:
+        return f"{int(seconds // 86400)} 天前"
+    return moment.strftime("%Y-%m-%d")
+
+
+def fmt_clock(value: Any) -> str:
+    moment = _to_local(value)
+    return "—" if moment is None else moment.strftime("%m-%d %H:%M:%S")
+
+
+def _to_local(value: Any) -> datetime | None:
+    """Coerce timestamps, pandas timestamps and ISO strings to local time.
+
+    ``pandas.Timestamp`` subclasses ``datetime`` but overrides ``astimezone``
+    with a signature that rejects the no-argument call, so values are converted
+    back to a plain ``datetime`` first.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        if hasattr(value, "to_pydatetime"):
+            value = value.to_pydatetime()
+        if isinstance(value, datetime):
+            moment = value
+        else:
+            moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        return datetime.fromtimestamp(moment.timestamp(), tz=UTC).astimezone()
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
+
+
+def fmt_ms(value: Any) -> str:
+    if value is None:
+        return "—"
+    try:
+        millis = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return f"{millis / 1000:.2f}s" if millis >= 1000 else f"{millis:.0f}ms"
+
+
+# --- Layout helpers -------------------------------------------------------
+def render_section(title: str, description: str | None = None) -> None:
+    st.markdown(section(title, description), unsafe_allow_html=True)
+
+
+def render_empty(message: str, hint: str | None = None) -> None:
+    st.markdown(empty_state(message, hint), unsafe_allow_html=True)
+
+
+def kpi_cards(items: list[tuple[str, str, str | None]], columns: int = 4) -> None:
+    """Render KPI cards as ``(label, value, hint)`` triples."""
+    for row_start in range(0, len(items), columns):
+        row = items[row_start : row_start + columns]
+        slots = st.columns(len(row), gap="small")
+        for slot, (label, value, hint) in zip(slots, row, strict=False):
+            with slot:
+                body = (
+                    f'<div class="claro-kpi"><div class="claro-kpi-label">{label}</div>'
+                    f'<div class="claro-kpi-value">{value}</div>'
+                )
+                if hint:
+                    body += f'<div class="claro-kpi-hint">{hint}</div>'
+                body += "</div>"
+                st.markdown(body, unsafe_allow_html=True)
+
+
+def data_table(
+    frame: Any,
+    *,
+    height: int | None = None,
+    column_config: dict[str, Any] | None = None,
+    empty_message: str = "当前筛选条件下没有数据",
+    empty_hint: str | None = None,
+) -> None:
+    """Render a dataframe, or an explicit empty state instead of a bare header."""
+    try:
+        is_empty = frame is None or len(frame) == 0
+    except TypeError:
+        is_empty = frame is None
+    if is_empty:
+        render_empty(empty_message, empty_hint)
+        return
+    options: dict[str, Any] = {
+        "hide_index": True,
+        "column_config": column_config,
+        "width": "stretch",
+    }
+    if height is not None:
+        options["height"] = height
+    st.dataframe(frame, **options)
+
+
+def render_activity(items: list[dict[str, Any]], *, limit: int = 10) -> None:
+    """Render the audit activity feed as a compact, theme-aware list."""
+    if not items:
+        render_empty("暂无治理活动", "执行一次演示流程后，这里会出现决策、审核与处置记录。")
+        return
+    rows = []
+    for item in items[:limit]:
+        rows.append(
+            '<div class="claro-event">'
+            f'<span class="claro-event-time">{fmt_relative(item.get("occurred_at"))}</span>'
+            f'<span class="claro-event-body">{item.get("summary") or "—"}'
+            f'<span class="claro-kpi-hint"> · {item.get("actor_ref") or "系统"}</span></span>'
+            "</div>"
+        )
+    st.markdown("".join(rows), unsafe_allow_html=True)

@@ -43,9 +43,7 @@ class AnalyticsRepository:
     def overview(self, filters: AnalyticsFilters) -> dict[str, Any]:
         params = filters.params()
         result = self._one(q.SQL_OVERVIEW, params)
-        result["repeat_offenders"] = self._one(q.SQL_REPEAT_OFFENDERS, params)[
-            "repeat_offenders"
-        ]
+        result["repeat_offenders"] = self._one(q.SQL_REPEAT_OFFENDERS, params)["repeat_offenders"]
         return result
 
     def time_series(self, filters: AnalyticsFilters, grain: q.Grain) -> list[dict[str, Any]]:

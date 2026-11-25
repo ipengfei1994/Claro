@@ -176,9 +176,7 @@ class AnalyticsService:
                 "risk_rate": ratio(row["risk_messages"], row["total_messages"]),
             }
             series.append(entry)
-        peaks = anomaly_peaks(
-            [float(item["risk_rate"] or 0.0) for item in series], sigma=3.0
-        )
+        peaks = anomaly_peaks([float(item["risk_rate"] or 0.0) for item in series], sigma=3.0)
         categories = []
         risk_total = as_int(self._repository.overview(filters)["risk_messages"])
         for row in self._repository.category_distribution(filters):
@@ -245,9 +243,7 @@ class AnalyticsService:
                     "total_decisions": as_int(row["total_decisions"]),
                     "automatic_decisions": as_int(row["auto_decided"]),
                     "review_decisions": as_int(row["review_decisions"]),
-                    "automatic_handling_rate": ratio(
-                        row["auto_decided"], row["status_decisions"]
-                    ),
+                    "automatic_handling_rate": ratio(row["auto_decided"], row["status_decisions"]),
                     "low_sample": low_sample(total, LOW_SAMPLE_MESSAGES),
                 }
             )

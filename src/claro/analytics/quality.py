@@ -187,9 +187,7 @@ class DataQualityService:
             "checks": [check.as_dict() for check in checks],
             "passed": sum(1 for check in checks if check.passed),
             "failed": sum(1 for check in checks if not check.passed),
-            "errors": sum(
-                1 for check in checks if not check.passed and check.severity == "error"
-            ),
+            "errors": sum(1 for check in checks if not check.passed and check.severity == "error"),
             "warnings": sum(
                 1 for check in checks if not check.passed and check.severity == "warning"
             ),

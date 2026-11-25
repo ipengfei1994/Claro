@@ -1,3 +1,8 @@
+# Claro UI configuration.
+# Colour schemes are declared natively so that every built-in Streamlit widget
+# (dataframes, inputs, buttons, menus) follows the active theme. The in-app
+# System / Light / Dark switcher in the hamburger menu selects between them.
+
 [theme]
 base = "light"
 primaryColor = "#2563EB"
@@ -6,12 +11,32 @@ secondaryBackgroundColor = "#F3F4F6"
 textColor = "#111827"
 font = "sans serif"
 
+[theme.light]
+primaryColor = "#2563EB"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F9FAFB"
+textColor = "#111827"
+borderColor = "#E5E7EB"
+font = "sans serif"
+
+[theme.dark]
+primaryColor = "#60A5FA"
+backgroundColor = "#0F172A"
+secondaryBackgroundColor = "#1E293B"
+textColor = "#E5E7EB"
+borderColor = "#334155"
+font = "sans serif"
+
 [server]
 port = 8501
 headless = true
+runOnSave = false
 
 [browser]
 gatherUsageStats = false
 
 [client]
-showSidebarNavigation = false
+# st.navigation owns the menu, so Streamlit's own page list stays visible and the
+# app menu must keep the Theme switcher (System / Light / Dark).
+showSidebarNavigation = true
+toolbarMode = "viewer"

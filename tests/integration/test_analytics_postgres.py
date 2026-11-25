@@ -67,9 +67,7 @@ def test_data_quality_queries_report_no_foreign_key_orphans(
 ) -> None:
     service = AnalyticsService(full_container.analytics_repository)
     quality = service.quality()
-    error_checks = [
-        check for check in quality["checks"] if check["severity"] == "error"
-    ]
+    error_checks = [check for check in quality["checks"] if check["severity"] == "error"]
     assert all(check["passed"] for check in error_checks)
     assert quality["definition_version"] == "phase-05.2"
 
@@ -155,9 +153,7 @@ def test_policy_rates_use_per_policy_denominators(full_container: AppContainer) 
     strategy = AnalyticsService(full_container.analytics_repository).strategy(_filters())
     policies = [row for row in strategy["policies"] if row["replay_hit_messages"] > 0]
     assert policies
-    automatic_denominators = {
-        row["automatic_action_rate"]["denominator"] for row in policies
-    }
+    automatic_denominators = {row["automatic_action_rate"]["denominator"] for row in policies}
     # Each policy is scored against its own hit count, so the denominators
     # must differ whenever the policies hit different numbers of messages.
     assert automatic_denominators <= {row["replay_hit_messages"] for row in policies}
@@ -176,8 +172,9 @@ def test_low_sample_governance_ratios_are_not_published_as_values(
     if decisions["eligible_finalized"] < 30:
         assert decisions["automatic_handling_rate"] is None
         assert decisions["automatic_handling_rate_detail"]["low_sample"] is True
-        assert decisions["automatic_handling_rate_detail"]["sample_size"] == (
-            decisions["eligible_finalized"]
+        assert (
+            decisions["automatic_handling_rate_detail"]["sample_size"]
+            == (decisions["eligible_finalized"])
         )
     # The observed confusion slice is small and must be flagged.
     assert governance["observed_confusion"]["low_sample"] is True

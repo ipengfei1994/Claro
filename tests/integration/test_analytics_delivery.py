@@ -12,26 +12,35 @@ from claro.analytics.filters import AnalyticsFilters
 from claro.analytics.reports import ReportService, default_filters
 from claro.analytics.services import AnalyticsService
 from claro.bootstrap import AppContainer
+from claro.ui.app import NAVIGATION
 
 pytestmark = pytest.mark.integration
 
-ANALYTICS_PAGES = (
-    "分析 · 总览",
-    "分析 · 风险",
-    "分析 · 社区",
-    "分析 · 治理",
-    "分析 · 模型",
-    "分析 · 策略评估",
+# Navigation moved from a radio group to ``st.navigation`` in Phase 06, so the
+# analytics pages are discovered from the real navigation table instead of a
+# hardcoded menu label. ``AppTest.switch_page`` resolves file paths relative to
+# the main script and therefore cannot address ``st.navigation`` pages, so each
+# screen module is rendered the same way ``app.py`` renders it.
+ANALYTICS_SCREENS = tuple(
+    renderer.__module__.rsplit(".", 1)[-1] for _, renderer, _ in NAVIGATION["分析"]
 )
 
 
-def test_all_analytics_pages_render_without_exceptions() -> None:
-    app_path = Path(__file__).resolve().parents[2] / "src" / "claro" / "ui" / "app.py"
-    for page in ANALYTICS_PAGES:
-        app = AppTest.from_file(str(app_path), default_timeout=180)
-        app.run()
-        app.radio[0].set_value(page).run()
-        assert not app.exception, f"{page}: {[str(item.value) for item in app.exception]}"
+def _render(screen: str) -> None:
+    import importlib
+
+    from claro.ui.common import get_container
+
+    importlib.import_module(f"claro.ui.screens.{screen}").render(get_container())
+
+
+@pytest.mark.parametrize("screen", ANALYTICS_SCREENS)
+def test_analytics_screen_renders_without_exceptions(screen: str) -> None:
+    assert screen.startswith("analytics_"), screen
+    app = AppTest.from_function(_render, args=(screen,), default_timeout=300)
+    app.run()
+    assert not app.exception, f"{screen}: {[str(item.value) for item in app.exception]}"
+    assert not app.error, f"{screen}: {[item.value for item in app.error]}"
 
 
 @pytest.mark.parametrize(

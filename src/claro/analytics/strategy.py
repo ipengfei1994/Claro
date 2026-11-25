@@ -79,9 +79,7 @@ class StrategyReplayService:
         versions = self._policies.versions(policy_id)
         match = next((item for item in versions if as_int(item.get("version")) == version), None)
         if match is None:
-            raise StrategyReplayError(
-                f"policy {policy_key} has no version {version}"
-            )
+            raise StrategyReplayError(f"policy {policy_key} has no version {version}")
         return PolicySnapshot(
             policy_id=policy_id,
             policy_key=policy_key,
@@ -128,9 +126,7 @@ class StrategyReplayService:
             if snapshot.policy_key in action_overrides:
                 updated = replace(updated, action=str(action_overrides[snapshot.policy_key]))
             if snapshot.policy_key in priority_overrides:
-                updated = replace(
-                    updated, priority=as_int(priority_overrides[snapshot.policy_key])
-                )
+                updated = replace(updated, priority=as_int(priority_overrides[snapshot.policy_key]))
             result.append(updated)
         return result
 
@@ -328,7 +324,6 @@ class StrategyReplayService:
             session.add(
                 AnalyticsReplayRun(
                     run_id=run_id,
-
                     created_at=datetime.now(UTC),
                     dataset_name=filters.dataset_name or "dataset_id=" + str(dataset_id),
                     window_start=filters.start,

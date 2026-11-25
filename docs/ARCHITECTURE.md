@@ -140,3 +140,87 @@ Hive 执行器按顺序调用建库、建 ODS、加载、DWD、DWS/ADS 和质量
 - 生产级 Kafka 副本、ACL/TLS、Redis 高可用和 PostgreSQL 高可用。
 - Hive SQL 的真实解析与执行，原因是缺少原生 Hive/Hadoop/Beeline。
 - 模型在真实游戏文本上的准确率；当前指标来自合成模板数据，不可外推。
+
+---
+
+# Phase 06 增补：产品化分层
+
+Phase 06 不推翻 Phase 01–05 的任何一层，只在其上补齐"能被使用"的部分：统一入口、只读读模型、分组导航与设计系统。
+
+## 6. 全系统分层
+
+```mermaid
+flowchart TD
+    subgraph Presentation["表示层 ui/"]
+        U1["app.py<br/>st.navigation 分组导航"]
+        U2["screens/ 15 个页面"]
+        U3["theme.py / charts.py / common.py<br/>设计令牌与格式化"]
+    end
+    subgraph Application["应用层 application/"]
+        A1["ClaroProcessingService<br/>process_message / process_batch"]
+        A2["ExplorerService<br/>探查 / 风险情报 / 总览读模型"]
+        A3["DemoService<br/>14 步演示与清理"]
+        A4["RiskService / GovernancePipelineService<br/>ModerationService / EnforcementService"]
+        A5["AnalyticsService / StrategyReplayService"]
+    end
+    subgraph Domain["领域层 domain/ + risk_engine/ + governance/"]
+        D1["枚举、值对象、状态机"]
+        D2["规则 / ML / 融合 / 评估"]
+        D3["策略条件、决策降级、处置规则"]
+    end
+    subgraph DataAccess["数据 access 层 data_access/"]
+        R1["ExplorerRepository<br/>只读参数化 SQL"]
+        R2["KafkaRepository / GovernanceRepository<br/>事务与幂等"]
+        R3["RiskRepository / AnalyticsRepository"]
+    end
+    subgraph Infra["基础设施 infrastructure/"]
+        I1["PostgreSQL / SQLAlchemy"]
+        I2["Kafka / Redis"]
+        I3["structlog 脱敏日志"]
+    end
+
+    U1 --> U2 --> A2
+    U2 --> A5
+    U2 --> A3
+    A1 --> A4
+    A1 --> A2
+    A2 --> R1
+    A4 --> R2
+    A5 --> R3
+    A4 --> D3
+    A1 --> D2
+    R1 --> I1
+    R2 --> I1
+    R2 --> I2
+    R3 --> I1
+```
+
+## 7. 新增的三条边界
+
+### 统一入口而不是新的流水线
+
+`ClaroProcessingService` 只做编排：validate → ingest → detect → publish → governance。每个阶段调用 Phase 02–05 已有服务，异常映射为 `partial`/`failed`，并把每阶段耗时写入 `processing_event`。这样"单条处理"与"Kafka 消费处理"共用同一套下游逻辑，不存在两套实现漂移。
+
+### 读模型与写模型分离
+
+`ExplorerRepository` 是纯只读的参数化 SQL 集合，不持有 Session，不参与事务；`ExplorerService` 把行转换为可直接渲染的值（解析时间、归一化枚举、显式缺失标记）。页面因此不含任何 SQL，也不会因为误用 ORM 而触发隐式写。
+
+### 主题由 Streamlit 原生承担
+
+早期版本用 CSS 变量覆盖模拟深色模式，导致原生组件（表格、输入框）仍是浅色、文字不可见。Phase 06 改为在 `.streamlit/config.toml` 中声明 `[theme.light]` 与 `[theme.dark]`，由运行时决定配色，`theme.py` 只负责"当前是哪一种"以及 Plotly / 少量注入 HTML 的取色。结论记录在 [PHASE_06_SYSTEM_AUDIT.md](PHASE_06_SYSTEM_AUDIT.md)。
+
+## 8. Phase 06 的验证状态
+
+已验证：
+
+- 统一流水线在真实消息上跑通 5 个阶段，重复调用返回 `duplicate`。
+- 演示数据 7 条场景 + 7 个治理步骤可重复执行，第二次全部 `duplicate`。
+- 15 个页面在 AppTest 与真实浏览器中均无异常。
+- Light / Dark / System 三种主题下，图表、表格、状态徽章均保持可读。
+- 性能基准（1k / 10k / 50k）在同一台机器上实测，含 p50/p95/p99。
+
+未验证：
+
+- 多用户并发与真实权限体系（当前为模拟身份切换）。
+- Hive / Hadoop 离线链路（本机未安装）。
+- LLM 检测层对真实端点的调用（默认关闭）。

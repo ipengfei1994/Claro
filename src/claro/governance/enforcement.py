@@ -113,6 +113,4 @@ def validate_target_ref(action: str, target_ref: str, *, message_id: str) -> Non
     if action == DecisionAction.BLOCK.value and target_ref != message_id:
         raise EnforcementValidationError("BLOCK enforcement target must equal the message id")
     if action != DecisionAction.BLOCK.value and target_ref == message_id:
-        raise EnforcementValidationError(
-            "player enforcement target must not be the message id"
-        )
+        raise EnforcementValidationError("player enforcement target must not be the message id")

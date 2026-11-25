@@ -44,9 +44,7 @@ class PolicyEvaluationService:
         self._rate_window = rate_window_seconds
         self._logger = structlog.get_logger(__name__)
 
-    def evaluate_message(
-        self, message_id: UUID, *, now: datetime | None = None
-    ) -> dict[str, Any]:
+    def evaluate_message(self, message_id: UUID, *, now: datetime | None = None) -> dict[str, Any]:
         moment = now or datetime.now(UTC)
         self._policy_service.ensure_default_policy()
         context_data = self._repository.message_context(message_id)
@@ -56,9 +54,7 @@ class PolicyEvaluationService:
         rate_count = self._sender_rate(context.sender_ref, moment)
         if rate_count != context.rate_count:
             context = replace(context, rate_count=rate_count)
-        policies = self._policy_service.active_snapshots(
-            now=moment, dataset_id=dataset_id
-        )
+        policies = self._policy_service.active_snapshots(now=moment, dataset_id=dataset_id)
         default_policy = self._policy_service.get_default_snapshot()
         outcome = evaluate_policies(
             context,
@@ -75,9 +71,7 @@ class PolicyEvaluationService:
             is_synthetic=bool(message["is_synthetic"]),
         )
         if stored.get("created", False):
-            self._policy_service.increment_hits(
-                [item.policy.policy_id for item in outcome.matched]
-            )
+            self._policy_service.increment_hits([item.policy.policy_id for item in outcome.matched])
         return {
             **stored,
             "matched": [_match_summary(item) for item in outcome.matched],

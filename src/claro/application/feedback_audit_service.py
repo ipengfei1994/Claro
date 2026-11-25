@@ -83,19 +83,14 @@ class FeedbackAuditService:
         ]
         if feedback_type is not None:
             if feedback_type not in ERROR_FEEDBACK_TYPES:
-                raise GovernanceValidationError(
-                    f"'{feedback_type}' is not an error feedback type"
-                )
+                raise GovernanceValidationError(f"'{feedback_type}' is not an error feedback type")
             cases = [item for item in cases if item["feedback_type"] == feedback_type]
         return cases[:limit]
 
     def error_breakdown(self) -> dict[str, int]:
         stats = self._repository.feedback_stats()
         by_type = stats.get("by_type", {})
-        return {
-            kind: int(by_type.get(kind, 0))
-            for kind in sorted(ERROR_FEEDBACK_TYPES)
-        }
+        return {kind: int(by_type.get(kind, 0)) for kind in sorted(ERROR_FEEDBACK_TYPES)}
 
     # Audit ------------------------------------------------------------------
     def get_audit_logs(
@@ -105,9 +100,7 @@ class FeedbackAuditService:
         action: str | None = None,
         limit: int = 200,
     ) -> list[dict[str, Any]]:
-        return self._repository.list_audit(
-            entity_type=entity_type, action=action, limit=limit
-        )
+        return self._repository.list_audit(entity_type=entity_type, action=action, limit=limit)
 
     def get_resource_audit(
         self, entity_type: str, entity_id: UUID, *, limit: int = 200

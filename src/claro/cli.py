@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from confluent_kafka import KafkaException
 from sqlalchemy.exc import SQLAlchemyError
@@ -40,8 +42,20 @@ def _generation_spec(args: argparse.Namespace) -> GenerationSpec:
     )
 
 
+def _json_default(value: object) -> str:
+    """Render the non-JSON types that appear in status payloads."""
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, UUID):
+        return str(value)
+    return str(value)
+
+
 def _print_json(payload: object, output: Path | None = None) -> None:
-    rendered = json.dumps(payload, ensure_ascii=False, indent=2)
+    # UUID and datetime values appear in status payloads; rendering them as ISO
+    # text keeps every command printable instead of failing on the first
+    # non-JSON type.
+    rendered = json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default)
     print(rendered)
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -223,6 +237,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     governance_expire.add_argument("--limit", type=int, default=500)
     governance_expire.add_argument("--output", type=Path)
+
+    process_message_parser = subparsers.add_parser(
+        "process-message",
+        help="run one message through ingestion, detection, policy and decision",
+    )
+    process_message_parser.add_argument("--text", help="message content to process")
+    process_message_parser.add_argument("--message", help="existing message UUID to re-process")
+    process_message_parser.add_argument("--player", default="demo-player-cli")
+    process_message_parser.add_argument("--server", default="server-1")
+    process_message_parser.add_argument("--channel", default="world")
+    process_message_parser.add_argument("--dataset", default="phase-06-cli")
+    process_message_parser.add_argument("--no-publish", action="store_true")
+    process_message_parser.add_argument("--output", type=Path)
+
+    demo_run_parser = subparsers.add_parser(
+        "demo-run", help="execute the deterministic 14-step demonstration"
+    )
+    demo_run_parser.add_argument("--output", type=Path)
+    subparsers.add_parser("demo-status", help="show whether the demo dataset exists")
+    demo_clean_parser = subparsers.add_parser(
+        "demo-clean", help="delete only the demonstration dataset"
+    )
+    demo_clean_parser.add_argument(
+        "--yes", action="store_true", help="skip the confirmation prompt"
+    )
+    demo_clean_parser.add_argument("--output", type=Path)
 
     for name, help_text in (
         ("analytics-overview", "show Phase 05 overview KPIs"),
@@ -941,6 +981,128 @@ def _run_governance_expire(args: argparse.Namespace) -> dict[str, Any]:
         return {"expired": expired, "limit": args.limit}
 
 
+def _run_phase06_command(args: argparse.Namespace) -> int:
+    """Dispatch the Phase 06 processing and demonstration commands."""
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from claro.application.message_events import RawGameMessagePayload
+    from claro.bootstrap import create_app_container
+
+    if args.command == "demo-clean" and not args.yes:
+        print(
+            "This deletes every record in the phase-06 demonstration dataset.\n"
+            "The 50,000-message evaluation dataset is not touched.\n"
+            "Re-run with --yes to confirm.",
+            file=sys.stderr,
+        )
+        return 2
+
+    container = create_app_container()
+    try:
+        if args.command == "demo-status":
+            service = container.demo_service
+            if service is None:
+                print("demo service unavailable", file=sys.stderr)
+                return 1
+            _print_json(service.status())
+            return 0
+        if args.command == "demo-clean":
+            service = container.demo_service
+            if service is None:
+                print("demo service unavailable", file=sys.stderr)
+                return 1
+            _print_json(service.clean(), args.output)
+            return 0
+        if args.command == "demo-run":
+            service = container.demo_service
+            if service is None:
+                print("demo service unavailable", file=sys.stderr)
+                return 1
+            report = service.run()
+            _print_json(report.to_dict(), args.output)
+            return 0
+        if args.command == "process-message":
+            processing = container.processing_service
+            if processing is None:
+                print("processing service unavailable", file=sys.stderr)
+                return 1
+            if not args.text and not args.message:
+                print("either --text or --message is required", file=sys.stderr)
+                return 2
+            if args.message:
+                outcome = _reprocess_existing(container, args.message)
+                _print_json(outcome, args.output)
+                return 0 if outcome.get("status") not in {"failed"} else 1
+            content = str(args.text)
+            dataset_id = processing.resolve_dataset(args.dataset, seed=20261125)
+            payload = RawGameMessagePayload(
+                synthetic=True,
+                dataset_id=dataset_id,
+                dataset_name=args.dataset,
+                dataset_seed=20261125,
+                message_id=uuid4(),
+                external_message_id=f"cli-{uuid4()}",
+                trace_id=f"cli-{uuid4().hex[:12]}",
+                player_ref=args.player,
+                server_ref=args.server,
+                alliance_ref=None,
+                channel=args.channel,
+                content=content,
+                content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                language="zh-CN",
+                occurred_at=datetime.now(UTC),
+            )
+            outcome = processing.process_message(payload, publish=not args.no_publish)
+            _print_json(outcome.to_dict(), args.output)
+            return 0 if outcome.status in {"processed", "duplicate"} else 1
+    finally:
+        container.close()
+    return 1
+
+
+def _reprocess_existing(container, raw_message_id: str) -> dict[str, Any]:
+    """Re-run detection and governance for a message that is already stored."""
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    from claro.application.message_processing import ConsumedMessage
+    from claro.application.risk_events import RiskAssessedPayload
+
+    message_id = UUID(raw_message_id)
+    risk_service = container.risk_service
+    pipeline = container.governance_pipeline_service
+    if risk_service is None or pipeline is None:
+        raise RuntimeError("risk or governance service is unavailable")
+    risk_service.detect(message_id, force=True)
+    stored = risk_service.result(message_id)
+    header = (
+        container.explorer_service.detail(message_id)["header"]
+        if container.explorer_service
+        else None
+    )
+    event = RiskAssessedPayload.from_stored(
+        stored, synthetic=bool(header and header["is_synthetic"])
+    ).to_event(trace_id=f"reprocess-{message_id}")
+    handling = pipeline.handle(
+        ConsumedMessage(
+            event=event,
+            topic=container.settings.kafka.risk_topic,
+            partition=0,
+            offset=0,
+            received_at=datetime.now(UTC),
+            headers={},
+        )
+    )
+    decision = container.governance_repository.decision_for_message(message_id)
+    return {
+        "message_id": str(message_id),
+        "status": handling.status,
+        "risk": stored.to_dict(),
+        "decision": decision,
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
@@ -1230,6 +1392,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             configure_logging(load_settings())
             _print_json(_run_governance_expire(args), args.output)
             return 0
+        if args.command in {"process-message", "demo-run", "demo-status", "demo-clean"}:
+            from claro.infrastructure.logging import configure_logging
+
+            configure_logging(load_settings())
+            return _run_phase06_command(args)
         if args.command.startswith("analytics-") or args.command == "strategy-replay":
             from claro.infrastructure.logging import configure_logging
 
@@ -1245,3 +1412,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Claro startup failed: {error}", file=sys.stderr)
         return 1
     return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

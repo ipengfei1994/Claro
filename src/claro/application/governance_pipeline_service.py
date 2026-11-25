@@ -66,9 +66,7 @@ class GovernancePipelineService:
         self._maybe_enforce(payload, evaluation, decision)
         return HandlingResult("processed" if evaluation.get("created", False) else "duplicate")
 
-    def _publish_evaluation(
-        self, payload: RiskAssessedPayload, evaluation: dict[str, Any]
-    ) -> None:
+    def _publish_evaluation(self, payload: RiskAssessedPayload, evaluation: dict[str, Any]) -> None:
         if not evaluation.get("created", False):
             return
         self._repository.enqueue_event(

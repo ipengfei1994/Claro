@@ -232,9 +232,7 @@ class PolicyRepository:
         actor_ref: str,
         reason: str,
     ) -> dict[str, Any]:
-        return self.update_policy(
-            policy_id, enabled=enabled, actor_ref=actor_ref, reason=reason
-        )
+        return self.update_policy(policy_id, enabled=enabled, actor_ref=actor_ref, reason=reason)
 
     def rollback_policy(
         self,
@@ -333,7 +331,9 @@ class PolicyRepository:
             return [
                 _snapshot_from_row(row)
                 for row in session.scalars(
-                    select(Policy).where(Policy.policy_type.is_not(None)).order_by(Policy.policy_key)
+                    select(Policy)
+                    .where(Policy.policy_type.is_not(None))
+                    .order_by(Policy.policy_key)
                 )
             ]
 

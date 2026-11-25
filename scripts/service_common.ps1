@@ -1,3 +1,6 @@
+# Quiet the Invoke-WebRequest progress bar: it corrupts report output in PS 5.1.
+$ProgressPreference = "SilentlyContinue"
+
 $script:ClaroProjectRoot = Split-Path -Parent $PSScriptRoot
 $script:ClaroRuntimeRoot = Join-Path $script:ClaroProjectRoot "runtime"
 $script:ClaroLogRoot = Join-Path $script:ClaroProjectRoot "logs"
@@ -10,6 +13,37 @@ $script:ClaroPhase02Topics = @(
     "game.messages.retry",
     "game.messages.dead-letter"
 )
+
+function Reset-ClaroDuplicateEnvironment {
+    <#
+    .SYNOPSIS
+        Collapse case-duplicate environment variables in the current process.
+
+    .DESCRIPTION
+        Windows environment blocks are case-insensitive, but some shells (and
+        proxy injectors) export both ``HTTPS_PROXY`` and ``https_proxy``. When
+        that happens PowerShell 5.1's Start-Process throws
+        "An item with the same key has already been added" because it copies the
+        environment into a case-sensitive dictionary. Keeping a single canonical
+        upper-case entry makes every downstream launcher deterministic.
+    #>
+    $variables = [Environment]::GetEnvironmentVariables()
+    $duplicates = $variables.Keys |
+        Group-Object { $_.ToLowerInvariant() } |
+        Where-Object { $_.Count -gt 1 }
+    foreach ($group in $duplicates) {
+        $names = @($group.Group)
+        $canonical = $names | Where-Object { $_ -ceq $_.ToUpperInvariant() } | Select-Object -First 1
+        if (-not $canonical) {
+            $canonical = $names[0]
+        }
+        $value = $variables[$canonical]
+        foreach ($name in $names) {
+            [Environment]::SetEnvironmentVariable($name, $null)
+        }
+        [Environment]::SetEnvironmentVariable($canonical, $value)
+    }
+}
 
 function Resolve-ClaroRedisExecutable {
     param([string]$Name)
@@ -34,7 +68,15 @@ function Resolve-ClaroRedisExecutable {
 function Resolve-ClaroJavaHome {
     $java = Get-Command java.exe -ErrorAction SilentlyContinue
     if ($java) {
-        return Split-Path -Parent $java.Source
+        # java.exe on PATH may live in <jdk>\bin; callers always append bin\java.exe,
+        # so normalise to the JDK home directory rather than the binary directory.
+        $candidate = Split-Path -Parent $java.Source
+        if ((Split-Path -Leaf $candidate) -ieq "bin") {
+            $candidate = Split-Path -Parent $candidate
+        }
+        if (Test-Path (Join-Path $candidate "bin\java.exe")) {
+            return $candidate
+        }
     }
     $microsoftRoot = Join-Path $env:ProgramFiles "Microsoft"
     if (Test-Path $microsoftRoot) {
@@ -198,7 +240,9 @@ function Stop-ClaroRedis {
     if ($PSCmdlet.ShouldProcess("Redis PID $($process.Pid)", "Stop Claro Redis")) {
         Stop-Process -Id $process.Pid
         Wait-Process -Id $process.Pid -Timeout 15 -ErrorAction SilentlyContinue
-        Remove-Item -Path $pidFile
+        if (Test-Path $pidFile) {
+            Remove-Item -Path $pidFile
+        }
         Write-Host "Claro Redis stopped; persistent data was preserved."
     }
 }
@@ -248,6 +292,9 @@ function Start-ClaroKafka {
         }
     }
     $java = Join-Path $paths.JavaHome "bin\java.exe"
+    if (-not (Test-Path $java)) {
+        throw "Java runtime was not found at $java. Set JAVA_HOME or install Microsoft.OpenJDK.17."
+    }
     $classPath = Join-Path $paths.Home "libs\*"
     $log4j = "file:" + (Join-Path $paths.Home "config\log4j.properties")
     $arguments = @("-Xms256m", "-Xmx512m", "-Djava.awt.headless=true",
@@ -290,7 +337,9 @@ function Stop-ClaroKafka {
     if ($PSCmdlet.ShouldProcess("Kafka PID $($process.Pid)", "Stop Claro Kafka")) {
         Stop-Process -Id $process.Pid
         Wait-Process -Id $process.Pid -Timeout 20 -ErrorAction SilentlyContinue
-        Remove-Item -Path $pidFile
+        if (Test-Path $pidFile) {
+            Remove-Item -Path $pidFile
+        }
         Write-Host "Claro Kafka stopped; log data was preserved."
     }
 }
@@ -383,7 +432,9 @@ function Stop-ClaroPipeline {
         if ($PSCmdlet.ShouldProcess("$($spec.Name) PID $($process.Pid)", "Stop Claro $($spec.Name)")) {
             Stop-Process -Id $process.Pid
             Wait-Process -Id $process.Pid -Timeout 15 -ErrorAction SilentlyContinue
-            Remove-Item -Path $pidFile
+            if (Test-Path $pidFile) {
+                Remove-Item -Path $pidFile
+            }
             Write-Host "Claro $($spec.Name) stopped."
         }
     }
@@ -498,3 +549,217 @@ function Test-ClaroEnvironment {
     }
     return $results
 }
+
+# ---------------------------------------------------------------------------
+# Streamlit application lifecycle
+# ---------------------------------------------------------------------------
+function Get-ClaroAppPort {
+    if ($env:CLARO_UI__PORT) {
+        return [int]$env:CLARO_UI__PORT
+    }
+    return 8501
+}
+
+function Test-ClaroAppHttp {
+    param([int]$Port = (Get-ClaroAppPort))
+    try {
+        $response = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/_stcore/health" `
+            -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+        return $response.StatusCode -eq 200
+    } catch {
+        return $false
+    }
+}
+
+function Start-ClaroApp {
+    param([int]$Port = (Get-ClaroAppPort), [int]$TimeoutSeconds = 90)
+    $pidFile = Join-Path $script:ClaroRuntimeRoot "app.pid"
+    New-Item -ItemType Directory -Force -Path $script:ClaroRuntimeRoot, $script:ClaroLogRoot | Out-Null
+    if (-not (Test-Path $script:ClaroPython)) {
+        throw "Python virtual environment not found at .venv. Run scripts\init_database.ps1 first."
+    }
+    $owned = Test-ClaroOwnedProcess -PidFile $pidFile -ProcessName "python.exe" `
+        -CommandLinePattern "*claro*ui*app*"
+    if ($owned) {
+        Write-Host "Claro UI is already running under PID $($owned.Pid) on port $Port."
+        return
+    }
+    if (Test-ClaroAppHttp -Port $Port) {
+        throw "Port $Port is already serving a Streamlit app, but no matching Claro PID file exists; refusing to adopt it."
+    }
+    $process = Start-Process -FilePath $script:ClaroPython `
+        -ArgumentList @("-m", "streamlit", "run", "src/claro/ui/app.py",
+            "--server.port", "$Port", "--server.headless", "true", "--server.runOnSave", "false") `
+        -WorkingDirectory $script:ClaroProjectRoot -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput (Join-Path $script:ClaroLogRoot "app.stdout.log") `
+        -RedirectStandardError (Join-Path $script:ClaroLogRoot "app.stderr.log")
+    Set-Content -Path $pidFile -Value $process.Id
+    for ($attempt = 0; $attempt -lt ($TimeoutSeconds * 4); $attempt++) {
+        Start-Sleep -Milliseconds 250
+        if (Test-ClaroAppHttp -Port $Port) {
+            Write-Host "Claro UI is ready at http://127.0.0.1:$Port (PID $($process.Id))."
+            return
+        }
+        if ($process.HasExited) {
+            throw "The Claro UI exited during startup. Check logs\app.stderr.log."
+        }
+    }
+    throw "The Claro UI did not become healthy within $TimeoutSeconds seconds. Check logs\app.stderr.log."
+}
+
+function Stop-ClaroApp {
+    $pidFile = Join-Path $script:ClaroRuntimeRoot "app.pid"
+    $owned = Test-ClaroOwnedProcess -PidFile $pidFile -ProcessName "python.exe" `
+        -CommandLinePattern "*claro*ui*app*"
+    if (-not $owned) {
+        Write-Host "Claro UI is not running (no matching PID file)."
+        # The delete hook is fail-closed: removing a missing path throws instead
+        # of being suppressed by -ErrorAction, so the guard is explicit.
+        if (Test-Path $pidFile) {
+            Remove-Item -Path $pidFile -ErrorAction SilentlyContinue
+        }
+        return
+    }
+    Stop-Process -Id $owned.Pid -Force
+    if (Test-Path $pidFile) {
+        Remove-Item -Path $pidFile -ErrorAction SilentlyContinue
+    }
+    Write-Host "Claro UI stopped (PID $($owned.Pid))."
+}
+
+# ---------------------------------------------------------------------------
+# Environment reporting with an explicit state vocabulary
+# ---------------------------------------------------------------------------
+$script:ClaroStateKeys = @(
+    "Healthy", "Running", "Installed", "Missing", "Incompatible", "NotConfigured"
+)
+
+function New-ClaroState {
+    param([string]$Component, [string]$State, [string]$Detail, [string]$Hint = "")
+    if ($script:ClaroStateKeys -notcontains $State) {
+        throw "Unknown state '$State'. Allowed: $($script:ClaroStateKeys -join ', ')"
+    }
+    return [pscustomobject]@{ Component = $Component; State = $State; Detail = $Detail; Hint = $Hint }
+}
+
+function Get-ClaroEnvironmentReport {
+    param([string]$PostgreSQLServiceName)
+    $report = New-Object System.Collections.Generic.List[object]
+
+    # Python runtime
+    if (-not (Test-Path $script:ClaroPython)) {
+        $report.Add((New-ClaroState "Python venv" "Missing" `
+            "C:\...\.venv\Scripts\python.exe not found" "Run scripts\init_database.ps1"))
+    } else {
+        try {
+            $version = (& $script:ClaroPython --version 2>&1) -join ""
+            $ok = $version -match "3\.12"
+            $state = "Healthy"
+            if (-not $ok) { $state = "Incompatible" }
+            $report.Add((New-ClaroState "Python venv" $state $version `
+                $(if ($ok) { "" } else { "Claro requires Python 3.12" })))
+        } catch {
+            $report.Add((New-ClaroState "Python venv" "Incompatible" $_.Exception.Message ""))
+        }
+    }
+
+    # PostgreSQL
+    try {
+        $postgres = Resolve-ClaroPostgreSQL -ServiceName $PostgreSQLServiceName
+        if ($postgres.Service.Status -ne "Running") {
+            $report.Add((New-ClaroState "PostgreSQL" "Installed" `
+                "$($postgres.ServiceName): $($postgres.Service.Status)" "Run scripts\start_services.ps1"))
+        } else {
+            $ready = Invoke-ClaroProbe { & $postgres.PgIsReady -h 127.0.0.1 -p 5432 2>$null }
+            if ($LASTEXITCODE -eq 0) {
+                $report.Add((New-ClaroState "PostgreSQL" "Healthy" "127.0.0.1:5432 $ready" ""))
+            } else {
+                $report.Add((New-ClaroState "PostgreSQL" "Running" `
+                    "service running but pg_isready failed" "Check server logs"))
+            }
+        }
+    } catch {
+        $report.Add((New-ClaroState "PostgreSQL" "Missing" $_.Exception.Message `
+            "Install PostgreSQL 18 or set CLARO_POSTGRESQL__SERVICE_NAME"))
+    }
+
+    # Redis
+    try {
+        $redisCli = Resolve-ClaroRedisExecutable "redis-cli"
+        $response = Invoke-ClaroProbe { & $redisCli -h 127.0.0.1 -p 6379 ping 2>$null }
+        if ($LASTEXITCODE -eq 0 -and $response -eq "PONG") {
+            $report.Add((New-ClaroState "Redis" "Healthy" "127.0.0.1:6379 PONG" ""))
+        } else {
+            $report.Add((New-ClaroState "Redis" "Installed" "redis-cli found, server not answering" `
+                "Run scripts\start_services.ps1"))
+        }
+    } catch {
+        $report.Add((New-ClaroState "Redis" "Missing" $_.Exception.Message "Install the Redis Windows build"))
+    }
+
+    # Kafka
+    try {
+        $paths = Get-ClaroKafkaPaths
+        $null = Invoke-ClaroProbe {
+            Invoke-ClaroKafkaJava -Paths $paths -Class "org.apache.kafka.tools.TopicCommand" `
+                -Arguments @("--bootstrap-server", "127.0.0.1:9092", "--list") 2>$null
+        }
+        if ($LASTEXITCODE -eq 0) {
+            $report.Add((New-ClaroState "Kafka" "Healthy" "127.0.0.1:9092 topic listing succeeded" ""))
+        } else {
+            $report.Add((New-ClaroState "Kafka" "Installed" "broker not reachable on 9092" `
+                "Run scripts\start_services.ps1 -Service Kafka"))
+        }
+    } catch {
+        $report.Add((New-ClaroState "Kafka" "Missing" $_.Exception.Message "Install JDK 17 and Kafka 3.9"))
+    }
+
+    # Configuration
+    $envFile = Join-Path $script:ClaroProjectRoot ".env"
+    if (-not (Test-Path $envFile)) {
+        $report.Add((New-ClaroState "Configuration" "NotConfigured" ".env is missing" `
+            "Copy .env.example to .env"))
+    } else {
+        try {
+            $null = & $script:ClaroPython -c "from claro.config.settings import load_settings; load_settings()" 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $report.Add((New-ClaroState "Configuration" "Healthy" ".env loaded and validated" ""))
+            } else {
+                $report.Add((New-ClaroState "Configuration" "Incompatible" `
+                    ".env exists but settings validation failed" "Run with -Verbose for the full error"))
+            }
+        } catch {
+            $report.Add((New-ClaroState "Configuration" "Incompatible" $_.Exception.Message ""))
+        }
+    }
+
+    # Streamlit application
+    $port = Get-ClaroAppPort
+    $http = Test-ClaroAppHttp -Port $port
+    if ($http) {
+        $report.Add((New-ClaroState "Claro UI" "Healthy" "http://127.0.0.1:$port responds 200" ""))
+    } elseif (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) {
+        $report.Add((New-ClaroState "Claro UI" "Incompatible" `
+            "port $port is occupied by another process" "Stop that process or set CLARO_UI__PORT"))
+    } else {
+        $report.Add((New-ClaroState "Claro UI" "Installed" "not running on port $port" `
+            "Run scripts\start_app.ps1"))
+    }
+
+    return $report
+}
+
+function Write-ClaroStateTable {
+    param($Report)
+    $Report | Format-Table -AutoSize -Property Component, State, Detail
+}
+
+function Test-ClaroStateHealthy {
+    param($Report, [string[]]$Blocking = @("Missing", "Incompatible"))
+    $problems = $Report | Where-Object { $Blocking -contains $_.State }
+    return ($problems.Count -eq 0)
+}
+
+# Normalise the process environment before any Start-Process call.
+Reset-ClaroDuplicateEnvironment
+

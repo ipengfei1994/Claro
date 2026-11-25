@@ -304,11 +304,16 @@ def _validate_leaf(leaf: dict[str, Any]) -> None:
         "exists",
     }:
         raise PolicyValidationError(f"operator '{op}' is not valid for content")
-    if field in _STRING_FIELDS and field != "content" and op in {
-        "contains",
-        "not_contains",
-        "regex",
-    }:
+    if (
+        field in _STRING_FIELDS
+        and field != "content"
+        and op
+        in {
+            "contains",
+            "not_contains",
+            "regex",
+        }
+    ):
         raise PolicyValidationError(f"operator '{op}' is only supported for content")
     if op == "regex":
         if not isinstance(value, str) or not value or len(value) > MAX_REGEX_LENGTH:
@@ -568,10 +573,10 @@ def evaluate_policies(
     selected: PolicyMatch | None = None
     whitelist_skipped = False
     for candidate in matched:
-        if (
-            candidate.policy.policy_type == PolicyType.WHITELIST.value
-            and context.risk_level in {RiskSeverity.HIGH.value, RiskSeverity.CRITICAL.value}
-        ):
+        if candidate.policy.policy_type == PolicyType.WHITELIST.value and context.risk_level in {
+            RiskSeverity.HIGH.value,
+            RiskSeverity.CRITICAL.value,
+        }:
             whitelist_skipped = True
             continue
         selected = candidate

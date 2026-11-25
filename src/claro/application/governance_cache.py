@@ -39,9 +39,7 @@ class GovernanceCacheService:
         self._player_state_ttl = player_state_ttl_seconds
         self._logger = structlog.get_logger(__name__)
 
-    def sender_message_rate(
-        self, sender_ref: str, *, now: datetime | None = None
-    ) -> int:
+    def sender_message_rate(self, sender_ref: str, *, now: datetime | None = None) -> int:
         """Return the number of messages a sender produced in the active window.
 
         The value comes from PostgreSQL and is cached in Redis against a time

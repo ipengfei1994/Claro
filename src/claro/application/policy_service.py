@@ -237,9 +237,7 @@ class PolicyService:
             rate_count=rate_count,
             occurred_at=now,
         )
-        outcome = evaluate_policies(
-            context, policies, default_policy=default_policy, now=now
-        )
+        outcome = evaluate_policies(context, policies, default_policy=default_policy, now=now)
         return {
             "action": outcome.action,
             "reason": outcome.reason,

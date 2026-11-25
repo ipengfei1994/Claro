@@ -180,9 +180,7 @@ def check_replay_isolation(container) -> bool:
     print("3. Replay isolation (content-level fingerprints)")
     print("=" * 78)
     with container.engine.connect() as connection:
-        before = {
-            table: table_fingerprint(connection, table) for table in BUSINESS_TABLES
-        }
+        before = {table: table_fingerprint(connection, table) for table in BUSINESS_TABLES}
 
     filters = AnalyticsFilters(
         start=WINDOW_START, end=WINDOW_END, dataset_name=PRIMARY_DATASET_NAME
@@ -265,8 +263,7 @@ def check_policy_quality(container) -> bool:
     policies = sorted(policies, key=lambda row: row.get("hit_messages", 0), reverse=True)
 
     header = (
-        "  policy                              hits  precision   recall"
-        "      FPR      FNR  review"
+        "  policy                              hits  precision   recall      FPR      FNR  review"
     )
     print(header)
     for row in policies[:10]:

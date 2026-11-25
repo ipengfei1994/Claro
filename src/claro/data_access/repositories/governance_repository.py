@@ -399,6 +399,25 @@ class GovernanceRepository:
             )
             return _decision_dict(row) if row is not None else None
 
+    def case_for_message(self, message_id: UUID) -> dict[str, Any] | None:
+        """Return the moderation case bound to a message, if one exists."""
+        with session_scope(self._sessions) as session:
+            row = session.scalar(
+                select(ModerationCase).where(ModerationCase.message_id == message_id).limit(1)
+            )
+            return _case_dict(row) if row is not None else None
+
+    def enforcement_for_decision(self, decision_id: UUID) -> dict[str, Any] | None:
+        """Return the enforcement record produced by a decision, if any."""
+        with session_scope(self._sessions) as session:
+            row = session.scalar(
+                select(EnforcementAction)
+                .where(EnforcementAction.decision_id == decision_id)
+                .order_by(EnforcementAction.created_at.desc())
+                .limit(1)
+            )
+            return _enforcement_dict(row) if row is not None else None
+
     def list_decisions(
         self,
         *,

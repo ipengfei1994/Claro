@@ -163,9 +163,7 @@ def test_policy_change_changes_decision_for_same_message(
     assert second_decision["action"] == target_action
     assert second_decision["action"] != original_action
     assert second_evaluation["selected_policy_id"] == str(created["id"])
-    assert (
-        second_decision["explanation"]["policy"]["selected_policy_id"] == str(created["id"])
-    )
+    assert second_decision["explanation"]["policy"]["selected_policy_id"] == str(created["id"])
 
 
 @pytest.mark.integration

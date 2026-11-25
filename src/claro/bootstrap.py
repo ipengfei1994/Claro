@@ -9,20 +9,25 @@ from sqlalchemy.orm import sessionmaker
 from claro.analytics.data_access import AnalyticsRepository
 from claro.analytics.services import AnalyticsService
 from claro.analytics.strategy import StrategyReplayService
+from claro.application.demo_service import DemoService
 from claro.application.enforcement_service import EnforcementService
 from claro.application.events import EventEnvelope
+from claro.application.explorer_service import ExplorerService
 from claro.application.feedback_audit_service import FeedbackAuditService
 from claro.application.governance_cache import GovernanceCacheService
 from claro.application.governance_decision_service import GovernanceDecisionService
+from claro.application.governance_pipeline_service import GovernancePipelineService
 from claro.application.health import HealthRegistration, HealthService
 from claro.application.moderation_service import ModerationService
 from claro.application.policy_evaluation_service import PolicyEvaluationService
 from claro.application.policy_service import PolicyService
 from claro.application.ports import CachePort, EventBusPort
+from claro.application.processing_service import ClaroProcessingService
 from claro.application.risk_service import RiskService
 from claro.application.safety_cache import SafetyCacheService
 from claro.config.settings import ClaroSettings, load_settings
 from claro.data_access.database import create_database_engine, create_session_factory
+from claro.data_access.repositories.explorer_repository import ExplorerRepository
 from claro.data_access.repositories.governance_repository import (
     GovernanceRepository,
     GovernanceTopics,
@@ -32,7 +37,7 @@ from claro.data_access.repositories.risk_repository import RiskRepository
 from claro.data_access.repositories.safety_repository import SafetyRepository
 from claro.governance.decision import DecisionThresholds
 from claro.infrastructure.health import DatabaseHealthCheck
-from claro.infrastructure.kafka import KafkaEventBus
+from claro.infrastructure.kafka import KafkaEventBus, KafkaProducer
 from claro.infrastructure.logging import configure_logging
 from claro.infrastructure.memory import InMemoryEventBus
 from claro.infrastructure.redis import RedisCacheAdapter
@@ -61,6 +66,12 @@ class AppContainer:
     analytics_repository: AnalyticsRepository | None = None
     analytics_service: AnalyticsService | None = None
     strategy_replay_service: StrategyReplayService | None = None
+    explorer_repository: ExplorerRepository | None = None
+    explorer_service: ExplorerService | None = None
+    governance_pipeline_service: GovernancePipelineService | None = None
+    processing_service: ClaroProcessingService | None = None
+    demo_service: DemoService | None = None
+    producer: KafkaProducer | None = None
 
     def verify_connections(self) -> None:
         results = self.health_service.check_all()
@@ -83,6 +94,11 @@ class AppContainer:
             self.event_bus.close()
         except Exception as error:
             errors.append(error)
+        if self.producer is not None:
+            try:
+                self.producer.close()
+            except Exception as error:
+                errors.append(error)
         if self.cache is not None:
             try:
                 self.cache.close()
@@ -172,6 +188,51 @@ def create_app_container(settings: ClaroSettings | None = None) -> AppContainer:
     strategy_replay_service = StrategyReplayService(
         analytics_repository, policy_repository, session_factory
     )
+    explorer_repository = ExplorerRepository(engine)
+    risk_service = RiskService(resolved_settings, risk_repository, cache=cache)
+    enforcement_service = EnforcementService(governance_repository, cache=governance_cache)
+    policy_evaluation_service = PolicyEvaluationService(
+        governance_repository,
+        policy_service,
+        cache=governance_cache,
+        rate_window_seconds=resolved_settings.governance.rate_limit_window_seconds,
+    )
+    governance_decision_service = GovernanceDecisionService(
+        governance_repository,
+        thresholds=DecisionThresholds(
+            low_confidence=resolved_settings.governance.low_confidence_threshold,
+            high_risk_confidence=resolved_settings.governance.high_risk_confidence_threshold,
+        ),
+        review_sla_hours=resolved_settings.governance.review_sla_hours,
+    )
+    governance_pipeline_service = GovernancePipelineService(
+        governance_repository,
+        policy_evaluation_service,
+        governance_decision_service,
+        enforcement_service=enforcement_service,
+        auto_enforce=True,
+    )
+    # A dedicated multi-topic producer is only created in full mode; development
+    # mode keeps the in-memory bus and skips the publish stage explicitly.
+    producer: KafkaProducer | None = None
+    if resolved_settings.app.mode == "full" and resolved_settings.kafka.bootstrap_servers:
+        producer = KafkaProducer(
+            resolved_settings.kafka.bootstrap_servers,
+            f"{resolved_settings.kafka.client_id}-processing",
+            resolved_settings.kafka.security_protocol,
+            resolved_settings.kafka.producer_timeout_ms,
+        )
+    moderation_service = ModerationService(
+        governance_repository, feedback_service=feedback_audit_service
+    )
+    processing_service = ClaroProcessingService(
+        session_factory=session_factory,
+        risk_service=risk_service,
+        governance_pipeline=governance_pipeline_service,
+        governance_repository=governance_repository,
+        risk_topic=resolved_settings.kafka.risk_topic,
+        publisher=producer,
+    )
     return AppContainer(
         settings=resolved_settings,
         engine=engine,
@@ -180,34 +241,35 @@ def create_app_container(settings: ClaroSettings | None = None) -> AppContainer:
         cache=cache,
         safety_cache=safety_cache,
         risk_repository=risk_repository,
-        risk_service=RiskService(resolved_settings, risk_repository, cache=cache),
+        risk_service=risk_service,
         governance_repository=governance_repository,
         policy_repository=policy_repository,
         policy_service=policy_service,
         governance_cache=governance_cache,
-        policy_evaluation_service=PolicyEvaluationService(
-            governance_repository,
-            policy_service,
-            cache=governance_cache,
-            rate_window_seconds=resolved_settings.governance.rate_limit_window_seconds,
-        ),
-        governance_decision_service=GovernanceDecisionService(
-            governance_repository,
-            thresholds=DecisionThresholds(
-                low_confidence=resolved_settings.governance.low_confidence_threshold,
-                high_risk_confidence=resolved_settings.governance.high_risk_confidence_threshold,
-            ),
-            review_sla_hours=resolved_settings.governance.review_sla_hours,
-        ),
-        moderation_service=ModerationService(
-            governance_repository, feedback_service=feedback_audit_service
-        ),
-        enforcement_service=EnforcementService(
-            governance_repository, cache=governance_cache
-        ),
+        policy_evaluation_service=policy_evaluation_service,
+        governance_decision_service=governance_decision_service,
+        moderation_service=moderation_service,
+        enforcement_service=enforcement_service,
         feedback_audit_service=feedback_audit_service,
         analytics_repository=analytics_repository,
         analytics_service=analytics_service,
         strategy_replay_service=strategy_replay_service,
+        explorer_repository=explorer_repository,
+        explorer_service=ExplorerService(
+            explorer_repository, governance_repository, analytics_service
+        ),
+        governance_pipeline_service=governance_pipeline_service,
+        processing_service=processing_service,
+        demo_service=DemoService(
+            session_factory=session_factory,
+            engine=engine,
+            processing=processing_service,
+            governance=governance_repository,
+            moderation=moderation_service,
+            enforcement=enforcement_service,
+            feedback=feedback_audit_service,
+            strategy=strategy_replay_service,
+        ),
+        producer=producer,
         health_service=HealthService(registrations),
     )

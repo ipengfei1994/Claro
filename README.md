@@ -1,229 +1,240 @@
 # Claro
 
-**Everything under control.**
+**面向 SLG 场景的内容安全与风险治理平台。**
+Everything under control — 从一条游戏内聊天消息，到一次可追溯的处置决策。
 
-Claro 是面向 SLG 场景的本地优先内容安全与风险治理平台。当前已实现 **Phase 02：数据工程**、**Phase 03：风险智能引擎**、**Phase 04：内容治理** 与 **Phase 05：数据分析与策略效果评估**，包括可重复合成数据、PostgreSQL 持久化、Kafka 生产/消费链路、Redis 业务缓存、Hive 分层 SQL、分层风险检测（规则 + ML）、风险融合与解释、模型评估与风险事件发布、策略中心与治理闭环，以及统一 KPI 口径、风险/社区/治理/模型分析、隔离策略回放、分析报告导出与六个分析页面。
+Claro 不是一个检测模型的 demo，也不是一堆静态图表。它是一条完整链路：消息入库 → 分层检测 → 风险融合 → 策略裁决 → 人工审核 → 模拟处置 → 反馈与审计 → 分析度量，全部跑在**真实的** PostgreSQL / Kafka / Redis 上，界面由 15 个可交互页面组成。
 
-## 验收状态
+![治理总览](docs/screenshots/overview-light.png)
 
-| 能力 | 状态与证据 |
+---
+
+## 这个项目想证明什么
+
+内容安全系统的难点不在"能不能检测出脏话"，而在三件更麻烦的事：
+
+1. **同一个判断能不能被复现？** Claro 的决策是确定性的：同一消息 + 同一策略版本 + 同一风险结果，必然得到同一个 `decision_key` 与同一个动作，重跑不会产生第二条记录。
+2. **一个数字能不能被质疑？** 所有 KPI 只有一个口径来源（`phase-05.2`）。分母小于 30 的比率**拒绝发布**，界面显示"不可计算"和真实样本量——当前自动处置率就处于这个状态。
+3. **一条处置能不能被追溯？** 每条消息都能展开到"哪条规则命中、哪个模型给了多少分、哪次策略裁决、谁审核的、变更前后的状态是什么"。
+
+以及一条贯穿全局的规则：**不假装**。没装的 Hive 写"未安装"，模型文件不存在就写"没有模型"，处置是模拟的就写 `simulated=true`。
+
+---
+
+## 快速开始
+
+前提：Windows 11 + Python 3.12 + PostgreSQL 18 + Kafka 3.9 + Redis（原生安装，不用 Docker）。
+
+```powershell
+scripts\claro.ps1 install            # 建虚拟环境、装依赖
+Copy-Item .env.example .env          # 填写 CLARO_DATABASE__URL 等
+scripts\check_environment.ps1        # 六态自检，有阻塞项会返回非零
+scripts\start_claro.ps1              # 服务 → 迁移 → 应用（一键）
+scripts\run_demo.ps1                 # 14 步端到端演示
+```
+
+打开 <http://127.0.0.1:8501>。停止：`scripts\stop_claro.ps1`。
+
+详细的依赖、配置、脚本清单见 [docs/DEPLOYMENT_WINDOWS.md](docs/DEPLOYMENT_WINDOWS.md)。
+
+---
+
+## 界面
+
+15 个页面，按"要做的事"分组，而不是按模块分组。
+
+| 分组 | 页面 | 回答的问题 |
+|---|---|---|
+| 监控 | 治理总览 | 现在什么情况？ |
+| 处置 | 消息探查 / 审核工作台 / 治理决策 / 处置中心 | 这条消息怎么了，该怎么处理？ |
+| 策略与情报 | 策略中心 / 风险情报 | 规则和模型在做什么？ |
+| 分析 | 分析总览 / 风险分析 / 社区分析 / 治理分析 / 模型分析 / 策略评估 | 这段时间发生了什么？ |
+| 审计与配置 | 反馈与审计 / 系统设置 | 谁改了什么，系统健康吗？ |
+
+<table>
+<tr>
+<td><img src="docs/screenshots/overview-dark.png" alt="深色模式总览"></td>
+<td><img src="docs/screenshots/message-explorer-light.png" alt="消息探查"></td>
+</tr>
+<tr>
+<td align="center">治理总览（深色，Streamlit 原生主题）</td>
+<td align="center">消息探查：筛选 → 选中 → 完整证据链</td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/risk-intelligence-light.png" alt="风险情报"></td>
+<td><img src="docs/screenshots/settings-dark.png" alt="系统设置"></td>
+</tr>
+<tr>
+<td align="center">风险情报：检测层命中、规则目录、模型资产</td>
+<td align="center">系统设置：依赖健康与脱敏配置</td>
+</tr>
+</table>
+
+Light / Dark / System 三种主题由 Streamlit 原生配置承担（`[theme.light]` / `[theme.dark]`），不是 CSS 覆盖；图表、表格、状态徽章在两种主题下都保持可读。
+
+---
+
+## 已实现的能力
+
+| 能力 | 状态 | 证据 |
+|---|---|---|
+| 合成数据生成 | 已实现 | 固定 seed；默认 50,000 消息 / 5,000 玩家 / 10 服务器；`claro check-data` 质量检查通过 |
+| PostgreSQL 持久化 | 已实现 | 33 张表；Alembic 迁移到 head；`alembic check` 无漂移 |
+| Kafka 事件链路 | 已实现 | 真实生产/消费/手动提交/重试/DLQ/Inbox 去重；Group lag 可查 |
+| Redis 缓存 | 已实现 | 敏感词、策略、黑名单、原子限流；Redis 不可用时回落 PostgreSQL |
+| 分层风险检测 | 已实现 | 规则（22 条 YAML）+ ML（char_wb TF-IDF + LR）+ 加权 noisy-OR 融合；语义层显式不可用，LLM 层默认关闭 |
+| 风险解释 | 已实现 | 每个分数可下钻到命中的规则/模型与证据 |
+| 策略中心 | 已实现 | 11 类策略、版本化、回滚、冲突扫描、Playground 试算 |
+| 治理决策 | 已实现 | 确定性优先级、置信度降级、自动/人工分流 |
+| 人工审核 | 已实现 | 状态机、乐观锁、二次复核、重开、反馈 |
+| 模拟处置 | 已实现 | warn/block/mute/temp_ban/perm_ban，全部 `simulated=true`，到期与解除留痕 |
+| 审计 | 已实现 | 追加式 `audit_event`，含变更前后状态、执行者、理由 |
+| 分析层 | 已实现 | 29 条具名 SQL、单一口径版本、低样本门禁、6 张分析页、Markdown/CSV 报告 |
+| 策略回放 | 已实现 | 基线 vs 候选逐样本比对，结果写入独立表，不改业务表 |
+| 统一处理入口 | 已实现 | `process_message` 五阶段编排；单条/批量；幂等；状态追踪 |
+| 可视化界面 | 已实现 | 15 个页面，Light/Dark/System，图表主题自适应 |
+| Windows 部署脚本 | 已实现 | 13 个 PowerShell 脚本，PID 跟踪，端口占用拒绝接管 |
+| 性能基准 | 已执行 | 1k/10k/50k 三档实测，含 p50/p95/p99 |
+| 自动化测试 | 已执行 | 单元 + 集成 + 15 页面 UI 冒烟 |
+| Hive / Hadoop 离线链路 | **未执行** | 本机未安装；SQL 与导出器已实现，执行会明确失败 |
+| LLM 检测层 | **未验证** | 默认关闭，未对真实端点调用 |
+| 真实身份与 RBAC | **未实现** | 当前为模拟身份切换，界面已标注 |
+
+完整的能力边界见 [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md)。
+
+---
+
+## 架构一句话版
+
+```mermaid
+flowchart LR
+    A["Kafka<br/>game.messages.raw"] --> B["统一流水线<br/>process_message"]
+    C["CLI<br/>process-message"] --> B
+    B --> D["检测与融合<br/>规则 + ML + 加权 noisy-OR"]
+    D --> E["治理<br/>策略 → 决策 → 审核 → 处置"]
+    E --> F["Outbox → Kafka<br/>治理事件"]
+    D --> G[("PostgreSQL<br/>33 张表")]
+    E --> G
+    G --> H["分析层<br/>29 条具名 SQL"]
+    G --> I["只读读模型<br/>ExplorerService"]
+    H --> J["Streamlit<br/>15 个页面"]
+    I --> J
+```
+
+分层：`ui/` → `application/` → `domain/` + `risk_engine/` + `governance/` → `data_access/` → `infrastructure/`。
+界面不含 SQL，读模型不含事务，风险引擎不依赖 Streamlit 或 SQLAlchemy。
+
+细节：[ARCHITECTURE.md](docs/ARCHITECTURE.md) · [DATA_FLOW.md](docs/DATA_FLOW.md) · [EVENT_FLOW.md](docs/EVENT_FLOW.md) · [DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md)
+
+---
+
+## 真实数字
+
+以下数字全部来自本机实测，不是估算。
+
+**数据集**（基线数据集 + 演示数据）
+
+| 项 | 值 |
 |---|---|
-| 合成数据生成器 | 已实现；默认 5,000 玩家、10 服务器、500 联盟、50,000 消息、40 条规则 |
-| PostgreSQL | 24 张业务表；Phase 02 迁移升级/降级/再升级通过，Phase 03 head `c4a7e1d9b2f6` 已应用，`alembic check` 无漂移 |
-| 默认数据集 | 50,000 条消息及标签、250,000 条处理事件真实落库，质量检查通过 |
-| Kafka | 真实生产、消费、手动提交、重试、DLQ、Inbox 去重及 Group lag 检查通过 |
-| Kafka → PostgreSQL | 100 条真实端到端测试、10 条重复投递验证通过；CLI 500 条链路通过 |
-| Redis | 敏感词、策略、黑名单、风险计数、原子限流、规则缓存及 PostgreSQL 回退已验证 |
-| Hive | PostgreSQL 导出与增量水位已验证；ODS/DWD/DWS/ADS SQL 已实现但**未执行** |
-| 风险分类体系 | 19 类（18 风险 + normal）、7 个领域，YAML 配置；单元测试覆盖映射与校验 |
-| 规则检测 | 22 条 YAML 规则；关键词、正则、否定词、黑白名单、重复消息检测通过 |
-| ML 检测 | char_wb TF-IDF + OneVsRest 逻辑回归/线性 SVM；训练、保存、加载、预测、玩家级切分泄漏检查通过 |
-| 风险融合 | 分层加权 noisy-OR、多标签、等级/动作映射、冲突与置信度解释，单元测试通过 |
-| 评估 | 二分类与多标签指标、逐标签混淆矩阵、错误样例持久化；验证/测试集真实运行 |
-| 风险持久化 | `risk_result` 唯一幂等；重复检测不新增结果；真实 PostgreSQL 验证通过 |
-| 风险 Kafka 事件 | 持久化后发布 `game.risk.assessed.v1`；真实 Kafka 端到端验证通过 |
-| PowerShell | 环境检查、服务状态、重复启动保护、Consumer 启停、Redis/Kafka 安全重启已验证 |
-| 治理策略中心 | 11 类策略、结构化条件、版本/回滚/启停/冲突扫描/Playground，真实 PostgreSQL + Redis 缓存 |
-| 治理决策 | 确定性优先级、冲突解决、严重度与置信度分离、自动/人工/观察分流、决策解释 |
-| 人工审核 | 状态机、乐观锁、二次复核、重开、反馈提交、模拟身份切换 |
-| 模拟处置 | WARN/BLOCK/MUTE/TEMP_BAN/PERM_BAN、玩家状态、到期/解除、幂等保护，全部 `simulated=true` |
-| 反馈与审计 | 误杀/漏判与错误案例、原始模型结果对照、追加式审计日志、全链路 Trace |
-| 治理事件流 | Outbox Pattern，6 类治理 Topic，真实 Kafka 发布验证（137 条事件 0 失败） |
-| 治理 UI | 六个页面：总览、Policy Center、Moderation Workbench、Governance Decisions、Enforcement Center、Feedback & Audit；真实浏览器渲染验证 |
-| 自动化 | **237 个单元测试通过，46 个真实集成测试通过**；Ruff 通过；6/6 治理 UI 页面 + 6/6 分析页面渲染通过 |
-| Phase 05 分析层 | **29 条具名 SQL** 在 PostgreSQL 真实执行；KPI 口径单一来源（`phase-05.2`）；数据质量检查通过 |
-| Phase 05 指标可信性 | 低样本门禁（分母 < 30 不发布数值）；JOIN 扇出三路径独立重算一致；检测层混淆矩阵覆盖 50,000 条消息；演示库不被测试污染 |
-| Phase 05 策略评估 | 逐策略 Precision / Recall / 误杀率 / 漏判率 / 人工审核占比；实测「命中多 ≠ 效果好」 |
-| Phase 05 回放 | 500 样本策略回放实测执行 10 处动作变化；9 张业务表**内容级 SHA-256 指纹**前后一致 |
-| Phase 05 报告 | 五类报告 Markdown + CSV 导出真实执行；Excel/PDF 未实现（无依赖） |
+| 消息 | 50,016 |
+| 风险事件 | 8,856 |
+| 原子证据（`risk_finding`） | 8,893 |
+| 治理决策 | 50,016（其中 50,003 条为历史批量数据，无决策状态） |
+| 页面 | 15（5 组导航） |
+| 测试 | 308 passed / 覆盖率 79% |
+| 数据库体积 | 405 MB（`pg_database_size` 实测） |
 
-Hive 阻塞原因：当前 Windows 环境未安装原生 Hive、Hadoop 或 Beeline。不得将该部分标记为运行验证。语义检测器当前为显式不可用占位；LLM 顾问层默认关闭，未对真实端点验证。Phase 05 的 `moderation_review` 与 `governance_feedback` 为空，人工一致性及线上误杀/漏判不可计算；所有策略仅 v1，历史版本对比不可用。Phase 05 的误杀率/漏判率基线建立在 `risk_event` 合成检测输出与 `message_label` 合成 ground truth 之上，属离线模拟指标，不代表线上真实标注效果。
+**性能**（本机 Intel64 8 核 / Windows 11 / PostgreSQL 18.3 / Kafka 3.9.2 / Redis 8.10.3）
 
-## 原生环境快速开始
+三档负载实测，详细方法与分位数见 [PHASE_06_PERFORMANCE.md](docs/PHASE_06_PERFORMANCE.md)。
 
-仅使用 Windows 原生服务，不引入容器化或 WSL 依赖。
+| 负载 | 吞吐 | 单条流水线 p50 / p95 / p99 |
+|---|---|---|
+| 1,000 条 | 67 行/秒 | 128 / 189 / 272 ms |
+| 10,000 条 | 62 行/秒 | 107 / 150 / 180 ms |
+| 50,000 条 | 78 行/秒 | 145 / 216 / 332 ms |
 
-```powershell
-cd D:\桌面\Claro
-.\scripts\claro.ps1 install
-.\scripts\check_environment.ps1
-.\scripts\start_services.ps1
-.\scripts\init_database.ps1
-.\scripts\check_services.ps1
-.\scripts\claro.ps1 start
+**查询**（干净基线库，50,016 条消息）
+
+| 操作 | 耗时 |
+|---|---|
+| 总览读模型 | 1,937 ms |
+| 消息搜索（一页 25 条） | 444 ms |
+| 风险情报页 | 82 ms |
+| 分析总览 | 1,313 ms |
+| 分析风险 | 1,084 ms |
+| Redis 缓存（50 次读） | 0.86 ms/次，命中率 100% |
+
+聚合查询已在 Phase 06 通过改写 SQL 优化（`daily_timeline` 256→64 ms，`dataset_summary` 201→36 ms，
+`overview()` 进程内 3.35→1.05 s）；仪表盘的纯读聚合另加 45 秒缓存，页面热载 0.53–1.06 s。
+
+---
+
+## 目录结构
+
+```text
+claro/
+├── src/claro/
+│   ├── ui/              界面：app.py（导航）、screens/（15 页）、theme.py、charts.py
+│   ├── application/     应用服务：process_message、explorer、demo、风险、治理、分析
+│   ├── domain/          枚举、值对象、状态机
+│   ├── risk_engine/     预处理、规则、ML、融合、评估
+│   ├── governance/      策略条件、决策降级、处置规则
+│   ├── analytics/       29 条具名 SQL、指标、质量检查、报告
+│   ├── data_access/     SQLAlchemy 模型、仓储、只读读模型
+│   ├── infrastructure/  Kafka、Redis、日志（脱敏）
+│   ├── data_generation/ 合成数据生成器、演示场景
+│   └── config/          配置模型与校验
+├── scripts/             PowerShell 部署脚本 + Python 检查脚本
+├── migrations/          Alembic
+├── config/              风险分类、规则、阈值 YAML
+├── deploy/              Kafka / Redis 原生配置
+├── docs/                设计与交付文档
+└── tests/               unit / integration / ui
 ```
 
-`init_database.ps1` 会提示输入数据库密码，或读取进程环境变量 `CLARO_DB_PASSWORD`；不会覆盖现有 `.env`。数据库密码应通过 `%APPDATA%\postgresql\pgpass.conf` 提供给应用，不写入连接 URL。
-
-常用操作：
-
-```powershell
-.\scripts\generate_data.ps1
-.\scripts\generate_data.ps1 -Load
-.\scripts\start_pipeline.ps1
-.\scripts\check_services.ps1 -IncludePipeline
-.\scripts\stop_services.ps1 -Service Pipeline
-.\scripts\stop_services.ps1
-.\scripts\claro.ps1 test
-.\scripts\claro.ps1 test -Integration
-```
-
-## 数据工程命令
-
-```powershell
-# 只生成并输出摘要
-.\.venv\Scripts\python.exe -m claro generate-data --messages 1000 --output runtime\summary.json
-
-# 全量加载到 PostgreSQL
-.\.venv\Scripts\python.exe -m claro load-data --messages 1000
-
-# 质量检查与定向清理
-.\.venv\Scripts\python.exe -m claro check-data --dataset phase-02-synthetic-s20261125-p5000-m1000
-.\.venv\Scripts\python.exe -m claro clean-data --dataset phase-02-synthetic-s20261125-p5000-m1000
-
-# 独立 Kafka 生产者与消费者
-.\.venv\Scripts\python.exe -m claro kafka-topics
-.\.venv\Scripts\python.exe -m claro kafka-produce --messages 100 --topic game.messages.raw.smoke
-.\.venv\Scripts\python.exe -m claro kafka-consume --topic game.messages.raw.smoke --persist --max-messages 100
-.\.venv\Scripts\python.exe -m claro kafka-group --group claro.pipeline.v1
-
-# PostgreSQL → Hive ODS 快照
-.\.venv\Scripts\python.exe -m claro warehouse-export --full --output runtime\warehouse
-```
-
-## 风险引擎命令
-
-```powershell
-# 查看配置、启用检测器与 active 模型
-.\.venv\Scripts\python.exe -m claro risk-status
-
-# 同步 YAML 规则到 PostgreSQL（检测读取时仍走数据库/Redis）
-.\.venv\Scripts\python.exe -m claro risk-sync-rules
-
-# 在已加载的合成数据集上训练并登记模型
-.\.venv\Scripts\python.exe -m claro risk-train --dataset phase-02-synthetic-s20261125-p5000-m50000
-
-# 在指定 split 上评估并持久化指标与错误样例
-.\.venv\Scripts\python.exe -m claro risk-evaluate --dataset phase-02-synthetic-s20261125-p5000-m50000 --split test
-
-# 单条消息、整批待检测消息或直接文本
-.\.venv\Scripts\python.exe -m claro risk-detect --message <message-id>
-.\.venv\Scripts\python.exe -m claro risk-detect --dataset phase-02-synthetic-s20261125-p5000-m50000 --limit 200
-.\.venv\Scripts\python.exe -m claro risk-detect --text "示例文本"
-
-# 查看已存结果与证据
-.\.venv\Scripts\python.exe -m claro risk-result --message <message-id>
-
-# 消费 persisted 事件并发布风险评估事件
-.\.venv\Scripts\python.exe -m claro risk-pipeline --max-messages 200
-
-# 查看评估错误样例
-.\.venv\Scripts\python.exe -m claro risk-cases --run <evaluation-run-id> --type borderline
-```
-
-## 内容治理命令
-
-```powershell
-# 初始化默认策略目录（42 条，幂等）
-.\.venv\Scripts\python.exe -m claro governance-seed-policies
-
-# 对一条消息评估策略 / 生成治理决策
-.\.venv\Scripts\python.exe -m claro governance-evaluate --message <message-id>
-.\.venv\Scripts\python.exe -m claro governance-decide --message <message-id>
-
-# 治理总览、过期处置、Outbox 分发
-.\.venv\Scripts\python.exe -m claro governance-status
-.\.venv\Scripts\python.exe -m claro governance-expire-enforcements
-.\.venv\Scripts\python.exe -m claro governance-dispatch-outbox
-
-# 消费风险事件，执行评估→决策→审核→处置编排
-.\.venv\Scripts\python.exe -m claro governance-pipeline --max-messages 200 --dispatch-outbox
-
-# 启动治理 Web UI
-.\.venv\Scripts\python.exe -m claro serve
-```
-
-## Phase 05 分析命令
-
-```powershell
-# 分析 KPI（全部来自 PostgreSQL 真实查询）
-.\.venv\Scripts\python.exe -m claro analytics-overview --days 365
-.\.venv\Scripts\python.exe -m claro analytics-risk --grain day
-.\.venv\Scripts\python.exe -m claro analytics-community --limit 100
-.\.venv\Scripts\python.exe -m claro analytics-governance
-.\.venv\Scripts\python.exe -m claro analytics-model
-.\.venv\Scripts\python.exe -m claro analytics-strategy
-.\.venv\Scripts\python.exe -m claro analytics-quality
-
-# 报告与隔离策略回放
-.\.venv\Scripts\python.exe -m claro analytics-report --type daily_risk --output-dir runtime\reports
-.\.venv\Scripts\python.exe -m claro strategy-replay --sample-limit 300 `
-  --action-override gov-critical-risk-review=block --candidate-label "critical→block"
-```
-
-默认原始主题中保留了 Phase 02 早期 12 条旧 schema 冒烟消息。默认业务 Group 尚未消费它们；直接以 `earliest` 启动会把其路由到 DLQ。验收应使用新主题或明确处理这批历史消息。
-
-## 配置
-
-优先级：`config/default.yaml` < 模式 YAML < `.env` < 进程环境变量。
-
-```dotenv
-CLARO_APP__MODE=full
-CLARO_DATABASE__URL=postgresql+psycopg://claro@127.0.0.1:5432/claro
-CLARO_REDIS__URL=redis://127.0.0.1:6379/0
-CLARO_KAFKA__BOOTSTRAP_SERVERS=127.0.0.1:9092
-CLARO_UI__THEME=system
-```
-
-- development：SQLite + 内存事件总线，明确标记为模拟。
-- full：必须使用真实 PostgreSQL、Redis、Kafka。
-- PostgreSQL 是运营数据与审计的唯一权威来源；Redis 不是审计存储。
-- 所有合成记录保留 `is_synthetic=True` 或数据集 synthetic 标记。
-- 风险规则、分类体系、阈值位于 `config/detection_rules.yaml`、`config/risk_taxonomy.yaml`、`config/risk_thresholds.yaml`；LLM 凭据只从进程环境变量读取，不写入仓库。
+---
 
 ## 文档
 
-- [架构](docs/ARCHITECTURE.md)
-- [数据模型](docs/DATA_MODEL.md)
-- [开发计划与验收](docs/DEVELOPMENT_PLAN.md)
-- [风险分类体系](docs/RISK_TAXONOMY.md)
-- [风险引擎](docs/RISK_ENGINE.md)
-- [风险评分](docs/RISK_SCORING.md)
-- [模型评估](docs/MODEL_EVALUATION.md)
-- [合成数据生成器](docs/DATA_GENERATOR.md)
-- [Kafka 流水线](docs/KAFKA_PIPELINE.md)
-- [Redis 缓存](docs/REDIS_CACHE.md)
-- [Hive 数仓](docs/HIVE_WAREHOUSE.md)
-- [原生部署](docs/DEPLOYMENT.md)
-- [治理架构](docs/GOVERNANCE_ARCHITECTURE.md)
-- [策略引擎](docs/POLICY_ENGINE.md)
-- [审核工作流](docs/MODERATION_WORKFLOW.md)
-- [处置模拟](docs/ENFORCEMENT_SIMULATOR.md)
-- [治理数据模型](docs/GOVERNANCE_DATA_MODEL.md)
-- [Phase 04 测试报告](docs/PHASE_04_TEST_REPORT.md)
-- [Phase 04 完成报告](docs/PHASE_04_COMPLETION_REPORT.md)
-- [Phase 05 集成审查](docs/PHASE_05_INTEGRATION_AUDIT.md)
-- [分析架构](docs/ANALYTICS_ARCHITECTURE.md)
-- [分析数据模型](docs/ANALYTICS_DATA_MODEL.md)
-- [分析数据质量](docs/ANALYTICS_DATA_QUALITY.md)
-- [KPI 统一口径](docs/KPI_DEFINITIONS.md)
-- [风险分析](docs/RISK_ANALYTICS.md)
-- [治理分析](docs/GOVERNANCE_ANALYTICS.md)
-- [模型表现分析](docs/MODEL_PERFORMANCE_ANALYTICS.md)
-- [策略评估](docs/STRATEGY_EVALUATION.md)
-- [Hive 离线分析状态](docs/HIVE_OFFLINE_ANALYTICS.md)
-- [Phase 05 测试报告](docs/PHASE_05_TEST_REPORT.md)
-- [Phase 05 三项验收标准审查报告](docs/PHASE_05_ACCEPTANCE_REVIEW.md)
-- [Phase 05 完成报告](docs/PHASE_05_COMPLETION_REPORT.md)
+| 文档 | 内容 |
+|---|---|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 分层、关键决策、Phase 06 增补 |
+| [DATA_FLOW.md](docs/DATA_FLOW.md) | 数据从消息到指标的完整路径、幂等设计 |
+| [EVENT_FLOW.md](docs/EVENT_FLOW.md) | Kafka 拓扑、投递语义、失败处置、Outbox |
+| [DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md) | ER 图、表分组、约束与索引策略 |
+| [RISK_INTELLIGENCE.md](docs/RISK_INTELLIGENCE.md) | 四层检测、融合公式、阈值、模型资产 |
+| [CONTENT_GOVERNANCE.md](docs/CONTENT_GOVERNANCE.md) | 策略、决策、审核状态机、模拟处置、审计 |
+| [ANALYTICS.md](docs/ANALYTICS.md) | 口径、低样本门禁、一致性检查、回放 |
+| [DEPLOYMENT_WINDOWS.md](docs/DEPLOYMENT_WINDOWS.md) | 原生部署、脚本清单、PID 安全、端口 |
+| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 按症状排查 |
+| [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | 所有已知边界，逐条列明 |
+| [DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | 12–15 分钟演示脚本（8 部分） |
+| [PORTFOLIO_CASE_STUDY.md](docs/PORTFOLIO_CASE_STUDY.md) | 作品集案例：问题、取舍、结果 |
+| [PHASE_06_SYSTEM_AUDIT.md](docs/PHASE_06_SYSTEM_AUDIT.md) | 产品化前的系统审计与缺陷分级 |
+| [PHASE_06_TEST_REPORT.md](docs/PHASE_06_TEST_REPORT.md) | 测试范围与真实结果 |
+| [PHASE_06_PERFORMANCE.md](docs/PHASE_06_PERFORMANCE.md) | 基准方法与前后对比 |
+| [PHASE_06_COMPLETION_REPORT.md](docs/PHASE_06_COMPLETION_REPORT.md) | 交付清单与验收状态 |
 
-## 当前阶段边界
+---
 
-- Hive SQL 尚未在真实 Hive 引擎执行。
-- 语义检测器只有显式不可用占位，不产生语义 finding。
-- LLM 仅作为可选顾问层，默认关闭；没有真实端点验证记录。
-- 模型指标来自合成模板数据，不代表真实游戏文本准确率。
-- 所有治理处置均为平台内部模拟，不连接真实游戏服务器。
-- UI 身份为模拟身份，鉴权/RBAC 与生产级高可用尚未实现。
-- 分析层中人工审核标签、反馈标注与策略多版本历史缺失，相应指标标记为不可计算。
-- 分析层比例指标在分母 < 30 时不发布数值，显示「不可计算」并附样本量。
-- Excel/PDF 报告导出未实现；仅提供 Markdown 与 CSV。
+## 测试
+
+```powershell
+scripts\run_tests.ps1 -Suite unit          # 无需外部服务
+scripts\run_tests.ps1 -Suite integration   # 需要 PostgreSQL / Kafka / Redis
+scripts\run_tests.ps1 -Suite ui            # 15 个页面逐个渲染
+scripts\run_tests.ps1 -Suite all -Coverage
+```
+
+结果见 [PHASE_06_TEST_REPORT.md](docs/PHASE_06_TEST_REPORT.md)。
+
+---
+
+## 数据声明
+
+本仓库中的全部数据均为**合成数据**，由固定 seed 生成，不含任何真实玩家信息、真实聊天内容或真实运营指标。所有性能与质量数字都来自本机实测，测试环境记录在性能文档中。
+
+## 许可
+
+见 [LICENSE](LICENSE)。
