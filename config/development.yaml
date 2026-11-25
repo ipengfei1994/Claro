@@ -1,0 +1,5 @@
+app:
+  mode: development
+
+database:
+  url: sqlite:///./data/claro-dev.db

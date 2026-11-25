@@ -1,0 +1,296 @@
+# Claro detection rules (Phase 03).
+#
+# Types:
+#   keyword      - substring match against normalized and de-obfuscated text
+#   regex        - Python regular expression with span evidence
+#   url_pattern  - any URL whose host is not in allow_hosts
+#   blacklist    - URL host or exact token from `entries`
+#   repetition   - repeated phrase detection from preprocessing features
+#
+# Rules are synthetic and calibrated against the Phase 02 synthetic dataset.
+# They are not a substitute for human review. `negative_terms` suppresses a rule
+# when the message appears to warn about or ask about the pattern.
+
+version: 1
+rules:
+  - id: R-AD-001
+    name: Promotional call to action
+    type: keyword
+    category: spam_advertising
+    severity: medium
+    weight: 0.7
+    priority: 10
+    status: active
+    version: 1
+    description: Explicit advertising phrases used to push external offers.
+    terms: [限时广告, 推广链接, 错过今天, 立即点击, 代练套餐]
+    negative_terms: [举报, 请勿]
+
+  - id: R-AD-002
+    name: Commercial offer wording
+    type: keyword
+    category: spam_advertising
+    severity: low
+    weight: 0.5
+    priority: 20
+    status: active
+    version: 1
+    description: Commercial terms common in unsolicited offers.
+    terms: [五折, 套餐, 下单, 优惠出售, 秒发货]
+    negative_terms: [官方, 举报]
+
+  - id: R-REP-001
+    name: Repeated phrase flooding
+    type: repetition
+    category: spam_repetition
+    severity: medium
+    weight: 0.65
+    priority: 5
+    status: active
+    version: 1
+    description: A phrase repeated at least three times in one message.
+    min_repeats: 3
+    min_segment_length: 2
+
+  - id: R-JUNK-001
+    name: Character flood
+    type: regex
+    category: spam_junk
+    severity: low
+    weight: 0.45
+    priority: 30
+    status: active
+    version: 1
+    description: Four or more identical trailing characters.
+    pattern: "([\\u4e00-\\u9fffA-Za-z0-9!?！？])\\1{3,}"
+
+  - id: R-EXT-LINK-001
+    name: Non-official external link
+    type: url_pattern
+    category: external_link
+    severity: high
+    weight: 0.8
+    priority: 5
+    status: active
+    version: 1
+    description: A URL whose host is not an allow-listed official domain.
+    allow_hosts: [claro.example, www.claro.example]
+
+  - id: R-EXT-LINK-002
+    name: Blacklisted phishing domain
+    type: blacklist
+    category: external_link
+    severity: critical
+    weight: 0.95
+    priority: 1
+    status: active
+    version: 1
+    description: Hosts observed in synthetic phishing examples.
+    entries: [synthetic-link.example, claro-verify.invalid, scam-reward.invalid, free-gold.invalid]
+
+  - id: R-EXT-CONTACT-001
+    name: Off-platform contact identifier
+    type: regex
+    category: external_contact
+    severity: high
+    weight: 0.8
+    priority: 5
+    status: active
+    version: 1
+    description: WeChat, QQ or verbatim off-platform contact identifiers.
+    pattern: "(?i)(微信|wechat|vx|v信|qq|telegram|飞机)\\s*[:：]?\\s*[a-z0-9_-]{5,20}"
+    negative_terms: [举报, 请勿]
+
+  - id: R-EXT-CONTACT-002
+    name: Chinese mobile number
+    type: regex
+    category: external_contact
+    severity: medium
+    weight: 0.6
+    priority: 15
+    status: active
+    version: 1
+    description: Mainland China mobile number pattern.
+    pattern: "(?<![0-9])1[3-9][0-9]{9}(?![0-9])"
+    negative_terms: [举报, 请勿]
+
+  - id: R-EXT-INVITE-001
+    name: External community invite
+    type: keyword
+    category: external_community_invite
+    severity: medium
+    weight: 0.65
+    priority: 15
+    status: active
+    version: 1
+    description: Invitations to join off-platform groups.
+    terms: [外部战队群, 加群, 群号, 外部社群]
+    negative_terms: [举报, 区别, 吗, 如何]
+
+  - id: R-FRD-001
+    name: Free reward lure
+    type: keyword
+    category: fraud_fake_reward
+    severity: high
+    weight: 0.85
+    priority: 5
+    status: active
+    version: 1
+    description: Free currency or reward claims.
+    terms: [领取金币, 领取奖励, 兑换码, 免费领取, 福利码]
+    negative_terms: [请勿相信, 不要相信, 举报, 诈骗]
+
+  - id: R-FRD-002
+    name: Advance payment offer
+    type: keyword
+    category: fraud_fake_trade
+    severity: high
+    weight: 0.85
+    priority: 5
+    status: active
+    version: 1
+    description: Payment-first offers and implausible recharge discounts.
+    terms: [免费代充, 先付款后发货, 充值优惠, 限时优惠, 代充]
+    negative_terms: [官方, 请勿相信, 举报]
+
+  - id: R-FRD-PHISH-001
+    name: Credential harvest
+    type: regex
+    category: fraud_phishing
+    severity: critical
+    weight: 0.95
+    priority: 1
+    status: active
+    version: 1
+    description: Requests for passwords or verification codes combined with a link.
+    pattern: "(账号密码|验证码|验证你的账号|输入密码|登录验证)"
+    negative_terms: [请勿, 不要, 举报, 提醒]
+
+  - id: R-ACC-001
+    name: Account sale offer
+    type: keyword
+    category: account_sale
+    severity: high
+    weight: 0.8
+    priority: 5
+    status: active
+    version: 1
+    description: Buying or selling game accounts.
+    terms: [出售账号, 高等级账号, 买号, 卖号, 共享账号, 收号]
+    negative_terms: [举报, 是否, 规则, 风险, 吗]
+
+  - id: R-ACC-002
+    name: Boosting service
+    type: keyword
+    category: account_boosting
+    severity: medium
+    weight: 0.65
+    priority: 15
+    status: active
+    version: 1
+    description: Paid or incentivized account boosting.
+    terms: [专业代练, 代打, 冲榜, 代练]
+    negative_terms: [举报, 吗, 算违规]
+
+  - id: R-TRD-001
+    name: Off-system asset trade
+    type: keyword
+    category: virtual_asset_trading
+    severity: high
+    weight: 0.8
+    priority: 5
+    status: active
+    version: 1
+    description: Off-platform trading of assets, currency or cheats.
+    terms: [低价出售, 违规交易, 绕过官方, 虚拟资产, 金币交易, 账号交易]
+    negative_terms: [举报, 是否, 风险, 吗]
+
+  - id: R-HAR-001
+    name: Personal insult
+    type: keyword
+    category: harassment_personal
+    severity: medium
+    weight: 0.7
+    priority: 10
+    status: active
+    version: 1
+    description: Direct insults and demeaning labels.
+    terms: [废物, 闭嘴, 丢人, 蠢货, 嘲讽你]
+
+  - id: R-HATE-001
+    name: Group hostility
+    type: keyword
+    category: harassment_group
+    severity: critical
+    weight: 0.95
+    priority: 1
+    status: active
+    version: 1
+    description: Exclusion or inferiority claims about a group.
+    terms: [驱逐, 劣等, 不配留在, 仇恨口号]
+    negative_terms: [如何, 区别, 举报, 吗]
+
+  - id: R-THREAT-001
+    name: Real-world threat
+    type: keyword
+    category: harassment_threat
+    severity: critical
+    weight: 0.95
+    priority: 1
+    status: active
+    version: 1
+    description: Threats of physical harm or doxxing.
+    terms: [人身安全, 动手, 堵住他, 让你后悔, 威胁你]
+    negative_terms: [区别, 举报, 吗]
+
+  - id: R-SEX-001
+    name: Sexual content distribution
+    type: keyword
+    category: sexual_content
+    severity: high
+    weight: 0.85
+    priority: 5
+    status: active
+    version: 1
+    description: Sexual material or solicitation.
+    terms: [色情资源, 裸聊, 成人资源, 成人内容, 成人服务]
+    negative_terms: [举报, 是否, 吗]
+
+  - id: R-SH-001
+    name: Self-harm expression
+    type: keyword
+    category: self_harm
+    severity: critical
+    weight: 0.95
+    priority: 1
+    status: active
+    version: 1
+    description: Expressions of intent to self-harm.
+    terms: [不想活, 结束一切, 伤害自己, 自杀]
+    negative_terms: [如何寻求帮助, 举报]
+
+  - id: R-CHEAT-001
+    name: Cheat promotion
+    type: keyword
+    category: violation_expression
+    severity: high
+    weight: 0.8
+    priority: 5
+    status: active
+    version: 1
+    description: Selling or promoting cheats and exploits.
+    terms: [外挂, 私服, 加速脚本, 卡bug, 刷资源脚本]
+    negative_terms: [举报, 吗, 证据]
+
+  - id: R-URL-001
+    name: Bare domain mention
+    type: regex
+    category: external_link
+    severity: medium
+    weight: 0.6
+    priority: 20
+    status: active
+    version: 1
+    description: Domain-like tokens without a scheme.
+    pattern: "(?i)(?<![@a-z0-9-])(?:[a-z0-9-]{1,63}\\.)+(?:com|cn|net|xyz|top|vip|invalid|example)(?![a-z0-9-])"
+    negative_terms: [官方, 举报]

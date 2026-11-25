@@ -1,0 +1,38 @@
+# Risk fusion and scoring configuration.
+#
+# The fusion strategy is a configurable, explainable weighted noisy-OR:
+#   category_score = 1 - PRODUCT(1 - layer_weight * layer_strength)
+# It is a hand-tuned decision rule, not a statistically calibrated model.
+# Overall score = max(category_score) to preserve multi-label output.
+
+version: 1
+
+levels:
+  normal_upper: 0.20
+  low_upper: 0.45
+  medium_upper: 0.70
+  high_upper: 0.90
+
+actions:
+  allow_below: 0.20
+  warn_below: 0.45
+  review_below: 0.70
+  block_below: 0.90
+  else: restrict
+
+layer_weights:
+  rule: 0.90
+  ml: 0.80
+  semantic: 0.60
+  llm: 0.50
+
+severity_scores:
+  low: 0.35
+  medium: 0.55
+  high: 0.75
+  critical: 0.95
+
+ml_min_probability: 0.50
+conflict_gap: 0.35
+max_category_score: 0.99
+minimum_confidence: 0.30

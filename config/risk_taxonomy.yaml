@@ -1,0 +1,421 @@
+# Claro risk taxonomy.
+#
+# This file is the authoritative category registry for the Phase 03 risk engine.
+# `db_category` maps to an existing claro.domain.enums.RiskCategory value so that
+# findings can be stored without a destructive schema change. The taxonomy id is
+# the finer-grained label used by rules, ML metadata and explanations.
+#
+# All examples are synthetic and marked with the "Synthetic:" prefix.
+
+version: 1
+default_risk_level: medium
+db_category_names:
+  harassment: Harassment
+  hate_speech: Group Hate
+  sexual_content: Sexual Content
+  violence: Violence & Threats
+  fraud: Fraud & Scams
+  spam: Advertising & Spam
+  self_harm: Self-harm
+  other: Other Violations
+
+domains:
+  - id: advertising_spam
+    name: Advertising & Spam
+    name_zh: 广告与垃圾信息
+    definition: Promotional or low-value content that disrupts normal chat, including unsolicited ads, repetition and flooding.
+  - id: external_traffic
+    name: External Traffic Diversion
+    name_zh: 站外导流
+    definition: Attempts to move players to external platforms, private communities or off-platform contact channels.
+  - id: fraud_scams
+    name: Fraud & Scams
+    name_zh: 欺诈与诈骗
+    definition: Deceptive content intended to obtain money, credentials or game assets, including fake rewards and phishing.
+  - id: account_trading
+    name: Account & Asset Trading
+    name_zh: 账号与虚拟资产交易
+    definition: Commercial exchange of game accounts, boosting services or virtual assets outside official channels.
+  - id: harassment_abuse
+    name: Harassment & Abuse
+    name_zh: 骚扰与攻击
+    definition: Personal attacks, targeted harassment, group hostility and threats of real-world harm.
+  - id: inappropriate_content
+    name: Inappropriate Content
+    name_zh: 不适宜内容
+    definition: Sexual, self-harm or otherwise policy-prohibited expression that requires review or removal.
+  - id: normal
+    name: Normal Content
+    name_zh: 正常内容
+    definition: Ordinary gameplay coordination, alliance cooperation, strategy discussion and acceptable debate.
+
+categories:
+  - id: spam_advertising
+    db_category: spam
+    domain: advertising_spam
+    name: Advertising
+    definition: Unsolicited promotion of goods, services, communities or off-platform channels.
+    inclusion_criteria:
+      - Contains explicit promotion, pricing, recruitments or calls to purchase.
+      - Promotes a commercial or external service inside public game channels.
+    exclusion_criteria:
+      - Ordinary alliance recruitment without external contact or payment.
+      - Coordinating an in-game event that uses only official game features.
+    positive_examples:
+      - "Synthetic: 限时广告！代练套餐五折，私聊下单。"
+      - "Synthetic: 立即点击 [synthetic-link]，错过今天再等一年。"
+    negative_examples:
+      - "Synthetic: 今晚八点公会战，请大家提前集合。"
+    borderline_examples:
+      - "Synthetic: 公会招募信息每天最多可以发送几次？"
+    severity: medium
+    annotation_guidelines: Distinguish promotion from ordinary recruitment; outside contact or payment makes an ad more severe.
+
+  - id: spam_repetition
+    db_category: spam
+    domain: advertising_spam
+    name: Repeated Messages
+    definition: The same or near-identical message repeatedly posted by the same sender.
+    inclusion_criteria:
+      - Same sender posts near-identical content multiple times within a short window.
+      - In-message duplication of the same promotional phrase.
+    exclusion_criteria:
+      - Repeated system announcements or legitimate rallying cries.
+      - A single message quoting another player.
+    positive_examples:
+      - "Synthetic: 限时广告！限时广告！重复刷屏推广链接。"
+    negative_examples:
+      - "Synthetic: 城墙耐久不足，请求联盟成员增援。"
+    borderline_examples:
+      - "Synthetic: 这段重复广告是否应该被折叠？"
+    severity: medium
+    annotation_guidelines: Require at least three near-identical posts in the configured window; internal duplication alone is low severity.
+
+  - id: spam_junk
+    db_category: spam
+    domain: advertising_spam
+    name: Junk Content
+    definition: Low-signal filler, gibberish or bulk content that degrades channel quality.
+    inclusion_criteria:
+      - Meaningless character floods or repeated symbols without communicative value.
+      - Bulk promotional boilerplate.
+    exclusion_criteria:
+      - Emoji reactions in casual conversation.
+      - Short legitimate questions.
+    positive_examples:
+      - "Synthetic: 啊啊啊啊啊啊啊啊啊啊啊啊刷屏刷屏刷屏"
+    negative_examples:
+      - "Synthetic: 新版本更新后，步兵阵容应该如何搭配？"
+    borderline_examples:
+      - "Synthetic: 111111111 有人吗"
+    severity: low
+    annotation_guidelines: Severity rises when junk content blocks operational communication.
+
+  - id: external_link
+    db_category: spam
+    domain: external_traffic
+    name: Suspicious External Link
+    definition: A posted URL that is not an official game domain or is on a blacklist.
+    inclusion_criteria:
+      - Contains a URL whose host is not an allow-listed official domain.
+      - URL appears together with a reward, login or payment claim.
+    exclusion_criteria:
+      - Official support or announcement links.
+      - In-game coordinates expressed as numbers.
+    positive_examples:
+      - "Synthetic: 点击 [synthetic-link] 领取游戏金币。"
+      - "Synthetic: 访问 claro-verify.invalid 验证你的账号。"
+    negative_examples:
+      - "Synthetic: 官方充值优惠公告在哪里查看？"
+    borderline_examples:
+      - "Synthetic: 有人发布领取金币链接，请勿相信。"
+    severity: high
+    annotation_guidelines: Quoted warning about a link is not itself an external link violation; judge the intent of the sender.
+
+  - id: external_contact
+    db_category: spam
+    domain: external_traffic
+    name: External Contact
+    definition: Sharing phone numbers, WeChat/QQ identifiers or other off-platform contact details.
+    inclusion_criteria:
+      - Contains a phone number or an explicit WeChat/QQ/Telegram contact.
+      - Solicits private off-platform conversation.
+    exclusion_criteria:
+      - Reporting a contact for abuse.
+      - Official customer service channels.
+    positive_examples:
+      - "Synthetic: 加微信 vx13800138000 领取新手礼包。"
+      - "Synthetic: 联系 QQ 12345678 购买资源。"
+    negative_examples:
+      - "Synthetic: 服务器维护期间无法登录，请稍后再试。"
+    borderline_examples:
+      - "Synthetic: 举报时如何填写对方的联系方式？"
+    severity: medium
+    annotation_guidelines: Contact details used for fraud or account trading inherit the higher category severity.
+
+  - id: external_community_invite
+    db_category: spam
+    domain: external_traffic
+    name: Off-platform Community Invite
+    definition: Invitation to join an external group, server or community.
+    inclusion_criteria:
+      - Invites players to a non-official chat group or community.
+      - Uses reward or exclusivity to drive off-platform joins.
+    exclusion_criteria:
+      - In-game alliance invitations.
+    positive_examples:
+      - "Synthetic: 加入我们的外部战队群，私聊发群号。"
+    negative_examples:
+      - "Synthetic: 恭喜 {alliance} 赢得本周联盟排名。"
+    borderline_examples:
+      - "Synthetic: 外部社群和游戏内联盟有什么区别？"
+    severity: medium
+    annotation_guidelines: Combine with external_contact when explicit identifiers are present.
+
+  - id: fraud_fake_trade
+    db_category: fraud
+    domain: fraud_scams
+    name: Fake Trade
+    definition: Trade offers that are implausible, unverifiable or designed to take payment without delivery.
+    inclusion_criteria:
+      - Offers impossible discounts or guaranteed resources for advance payment.
+      - Requests payment outside official trading systems.
+    exclusion_criteria:
+      - Ordinary in-game resource negotiation within official channels.
+    positive_examples:
+      - "Synthetic: 免费代充，限时优惠，先付款后发货。"
+    negative_examples:
+      - "Synthetic: 低价收集中级材料，价格合理再谈。"
+    borderline_examples:
+      - "Synthetic: 官方充值优惠公告在哪里查看？"
+    severity: high
+    annotation_guidelines: Advance payment with no official escrow is a strong fraud signal.
+
+  - id: fraud_fake_reward
+    db_category: fraud
+    domain: fraud_scams
+    name: Fake Reward
+    definition: A claim that clicking, contacting or paying will unlock game rewards.
+    inclusion_criteria:
+      - Promises free currency, items or VIP status in exchange for an action.
+      - Uses urgency and scarcity to pressure players.
+    exclusion_criteria:
+      - Official event descriptions that link to in-game menus.
+    positive_examples:
+      - "Synthetic: 点击 [synthetic-link] 领取游戏金币。"
+    negative_examples:
+      - "Synthetic: 副本通关奖励已领取，欢迎组队挑战下一层。"
+    borderline_examples:
+      - "Synthetic: 有人发布领取金币链接，请勿相信。"
+    severity: high
+    annotation_guidelines: Warnings about fake rewards are normal content unless the sender distributes the link.
+
+  - id: fraud_phishing
+    db_category: fraud
+    domain: fraud_scams
+    name: Phishing
+    definition: Content that requests credentials, verification or account access through unofficial channels.
+    inclusion_criteria:
+      - Asks players to verify, log in or enter a password on an external page.
+      - Impersonates official support.
+    exclusion_criteria:
+      - Official security reminders that do not include a link.
+    positive_examples:
+      - "Synthetic: 官方客服提醒：访问 claro-verify.invalid 输入账号密码完成验证。"
+    negative_examples:
+      - "Synthetic: 请勿向任何人透露你的账号密码。"
+    borderline_examples:
+      - "Synthetic: 收到要求验证账号的私信应该怎么办？"
+    severity: critical
+    annotation_guidelines: Any credential request outside official channels is critical regardless of wording.
+
+  - id: account_sale
+    db_category: other
+    domain: account_trading
+    name: Account Sale
+    definition: Selling or buying a game account.
+    inclusion_criteria:
+      - Explicitly offers an account for sale or solicits account purchases.
+      - References price, level or server of the account.
+    exclusion_criteria:
+      - Asking how account recovery works.
+    positive_examples:
+      - "Synthetic: 低价出售高等级账号，绕过官方交易。"
+    negative_examples:
+      - "Synthetic: 玩家之间交换账号是否违反服务器规则？"
+    borderline_examples:
+      - "Synthetic: 账号交易会带来哪些风险？"
+    severity: high
+    annotation_guidelines: Questions about the rule are not violations; an actual offer to sell is.
+
+  - id: account_boosting
+    db_category: other
+    domain: account_trading
+    name: Account Boosting
+    definition: Paid or incentivized play on another player's account.
+    inclusion_criteria:
+      - Offers代练, leveling or rank pushing services.
+    exclusion_criteria:
+      - Helping a friend complete a cooperative in-game task.
+    positive_examples:
+      - "Synthetic: 专业代练，三天冲榜，价格私聊。"
+    negative_examples:
+      - "Synthetic: 萌新求一份新手任务流程，谢谢。"
+    borderline_examples:
+      - "Synthetic: 帮盟友打一次副本算违规吗？"
+    severity: medium
+    annotation_guidelines: Commercial intent is required for a violation.
+
+  - id: virtual_asset_trading
+    db_category: other
+    domain: account_trading
+    name: Virtual Asset Trading
+    definition: Buying or selling virtual assets outside official systems.
+    inclusion_criteria:
+      - Offers resources, items or currency for real money.
+      - Uses off-platform payment or delivery.
+    exclusion_criteria:
+      - In-game barter using official trade interfaces.
+    positive_examples:
+      - "Synthetic: 出售外挂和共享账号，违规交易私聊。"
+    negative_examples:
+      - "Synthetic: 感谢盟主今天的资源支援，已完成城防建设。"
+    borderline_examples:
+      - "Synthetic: 联盟内部互换资源是否需要审批？"
+    severity: high
+    annotation_guidelines: Combine with cheating rules when cheats are also advertised.
+
+  - id: harassment_personal
+    db_category: harassment
+    domain: harassment_abuse
+    name: Personal Attack
+    definition: Insults, demeaning language or targeted mockery directed at a player.
+    inclusion_criteria:
+      - Insults a named or implied player.
+      - Uses demeaning labels or sustained mockery.
+    exclusion_criteria:
+      - Criticism of a strategy or decision without attacking a person.
+    positive_examples:
+      - "Synthetic: 你个废物，闭嘴别再来丢人。"
+    negative_examples:
+      - "Synthetic: 队友连续失误，能不能认真一点？"
+    borderline_examples:
+      - "Synthetic: 你这操作真让人无语，建议再看一遍教程。"
+    severity: medium
+    annotation_guidelines: Focus on whether the target is a person; strong criticism of play may stay normal.
+
+  - id: harassment_group
+    db_category: hate_speech
+    domain: harassment_abuse
+    name: Group Attack
+    definition: Hostile or discriminatory statements about a group of people.
+    inclusion_criteria:
+      - Claims a group is inferior or should be excluded.
+      - Uses hateful slogans or dehumanizing language.
+    exclusion_criteria:
+      - Discussing historical conflict in an educational tone.
+    positive_examples:
+      - "Synthetic: 某个群体都该被驱逐，不配留在服务器。"
+    negative_examples:
+      - "Synthetic: 游戏里讨论历史冲突时请注意措辞。"
+    borderline_examples:
+      - "Synthetic: 如何区分正常争论与群体仇恨言论？"
+    severity: critical
+    annotation_guidelines: Protect groups, not in-game factions; attacking an enemy alliance is harassment only when it targets real people.
+
+  - id: harassment_threat
+    db_category: violence
+    domain: harassment_abuse
+    name: Threat
+    definition: Threats of real-world violence or harm.
+    inclusion_criteria:
+      - Threatens physical harm, doxxing or stalking.
+      - Uses in-game victory to imply real-world consequences.
+    exclusion_criteria:
+      - In-game attack plans against enemy bases.
+    positive_examples:
+      - "Synthetic: 不答应条件，我就威胁你的人身安全。"
+    negative_examples:
+      - "Synthetic: 我要去堵住他并动手，让他后悔。"
+    borderline_examples:
+      - "Synthetic: 游戏里击败对手和现实威胁有什么区别？"
+    severity: critical
+    annotation_guidelines: Distinguish in-game conflict from credible real-world threats; escalate any ambiguity to review.
+
+  - id: sexual_content
+    db_category: sexual_content
+    domain: inappropriate_content
+    name: Sexual Content
+    definition: Sexual material, solicitation or adult-service promotion.
+    inclusion_criteria:
+      - Shares or offers sexual content.
+      - Solicits sexual services or private adult contact.
+    exclusion_criteria:
+      - Reporting sexual content.
+      - Ordinary romance role-play without explicit content.
+    positive_examples:
+      - "Synthetic: 私聊发送色情资源，点击 [synthetic-link] 获取。"
+    negative_examples:
+      - "Synthetic: 请举报带有成人暗示的头像和简介。"
+    borderline_examples:
+      - "Synthetic: 这段剧情台词是否属于成人内容？"
+    severity: high
+    annotation_guidelines: Reports and policy questions are not violations; distribution and solicitation are.
+
+  - id: self_harm
+    db_category: self_harm
+    domain: inappropriate_content
+    name: Self-harm
+    definition: Content expressing intent or encouragement of self-harm.
+    inclusion_criteria:
+      - Expresses intent to self-harm or suicide.
+      - Encourages another person to self-harm.
+    exclusion_criteria:
+      - Asking where to find mental health support.
+    positive_examples:
+      - "Synthetic: 我准备伤害自己，你们不要拦我。"
+    negative_examples:
+      - "Synthetic: 看到令人沮丧的游戏消息时应该如何寻求帮助？"
+    borderline_examples:
+      - "Synthetic: 请把这条情绪求助消息转给安全管理员。"
+    severity: critical
+    annotation_guidelines: Prioritize safety support; do not treat help-seeking as a violation.
+
+  - id: violation_expression
+    db_category: other
+    domain: inappropriate_content
+    name: Other Violation
+    definition: Prohibited expression not covered by a more specific category, such as cheating or rule circumvention.
+    inclusion_criteria:
+      - Promotes cheats, exploits or rule evasion.
+      - Shares methods to bypass enforcement.
+    exclusion_criteria:
+      - Reporting a cheat with evidence.
+    positive_examples:
+      - "Synthetic: 出售外挂和共享账号，违规交易私聊。"
+    negative_examples:
+      - "Synthetic: 外挂举报需要提供哪些证据？"
+    borderline_examples:
+      - "Synthetic: 外挂举报需要提供哪些证据？"
+    severity: high
+    annotation_guidelines: Use only when no more specific category applies.
+
+  - id: normal
+    db_category: null
+    domain: normal
+    name: Normal Content
+    definition: Legitimate gameplay communication with no policy violation.
+    inclusion_criteria:
+      - Coordination, strategy, social chat or reasonable disagreement.
+      - Questions about rules or reporting mechanisms.
+    exclusion_criteria:
+      - Any solicitation, threat, fraud or prohibited trade.
+    positive_examples:
+      - "Synthetic: 今晚八点公会战，请大家提前集合。"
+      - "Synthetic: 游戏里讨论历史冲突时请注意措辞。"
+    negative_examples:
+      - "Synthetic: 出售外挂和共享账号，违规交易私聊。"
+    borderline_examples:
+      - "Synthetic: 队友连续失误，能不能认真一点？"
+    severity: normal
+    annotation_guidelines: Prefer normal when the message is a genuine question, warning or strategy discussion without harmful intent.

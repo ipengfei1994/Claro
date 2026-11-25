@@ -1,0 +1,61 @@
+app:
+  mode: development
+
+database:
+  url: null
+  echo: false
+  pool_size: 5
+  max_overflow: 10
+  pool_timeout: 30
+
+redis:
+  enabled: false
+  url: null
+  socket_timeout: 3.0
+
+kafka:
+  enabled: false
+  bootstrap_servers: null
+  topic: claro.content.events.v1
+  client_id: claro
+  security_protocol: PLAINTEXT
+  raw_topic: game.messages.raw
+  processed_topic: game.messages.processed
+  risk_topic: game.risk.events
+  moderation_topic: game.moderation.events
+  retry_topic: game.messages.retry
+  dead_letter_topic: game.messages.dead-letter
+  consumer_group: claro.pipeline.v1
+  retry_consumer_group: claro.pipeline.retry.v1
+  partitions: 3
+  replication_factor: 1
+  producer_timeout_ms: 10000
+  max_retries: 3
+  poll_timeout_seconds: 1.0
+
+logging:
+  level: INFO
+  directory: logs
+  json_output: true
+  max_bytes: 10485760
+  backup_count: 5
+
+ui:
+  port: 8501
+  theme: system
+
+governance:
+  consumer_group: claro.governance.v1
+  policy_cache_ttl_seconds: 60
+  rate_limit_window_seconds: 60
+  review_sla_hours: 24
+  low_confidence_threshold: 0.55
+  high_risk_confidence_threshold: 0.70
+  outbox_batch_size: 100
+  outbox_max_attempts: 5
+  topics:
+    evaluated: game.governance.evaluated.v1
+    decisions: game.governance.decisions.v1
+    moderation: game.governance.moderation.v1
+    enforcement: game.governance.enforcement.v1
+    feedback: game.governance.feedback.v1

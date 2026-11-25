@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claro"
+version = "0.1.0"
+description = "Local-first game content safety and risk governance platform"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "pydantic>=2.7,<3",
+  "pydantic-settings>=2.2,<3",
+  "PyYAML>=6.0,<7",
+  "structlog>=24.1,<26",
+  "SQLAlchemy>=2.0,<3",
+  "Alembic>=1.13,<2",
+  "psycopg[binary]>=3.2,<4",
+  "redis>=5.0,<7",
+  "confluent-kafka>=2.3,<3",
+  "streamlit>=1.37,<2",
+  "plotly>=5.22,<7",
+  "numpy>=1.26,<3",
+  "pandas>=2.2,<4",
+  "scikit-learn>=1.5,<2",
+  "joblib>=1.4,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+  "pytest-cov>=5,<7",
+  "ruff>=0.6,<1",
+]
+test-ui = ["playwright>=1.47,<2"]
+
+[project.scripts]
+claro = "claro.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "integration: requires real PostgreSQL, Redis, or Kafka services",
+]
+addopts = "-ra -m 'not integration' --import-mode=importlib"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

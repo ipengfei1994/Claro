@@ -1,0 +1,8 @@
+app:
+  mode: full
+
+redis:
+  enabled: true
+
+kafka:
+  enabled: true
