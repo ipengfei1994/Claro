@@ -18,3 +18,8 @@ models/
 deploy/**/runtime/
 runtime/
 .workbuddy/
+
+# Local agent instructions; not part of the published project
+AGENTS.md
+CLAUDE.md
+.cursorrules

@@ -1,5 +1,7 @@
 # Claro
 
+[简体中文](README.zh-CN.md)
+
 A local-first engineering prototype for content safety and risk governance in SLG (strategy game) player chat.
 
 Claro runs a governance lifecycle over synthetic chat messages, from ingestion through analytics. Every message keeps a stage-by-stage processing history.
