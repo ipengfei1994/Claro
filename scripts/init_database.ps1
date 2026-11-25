@@ -24,6 +24,7 @@ if ($LASTEXITCODE -ne 0) {
 $plainPassword = $env:CLARO_DB_PASSWORD
 if (-not $plainPassword) {
     $securePassword = Read-Host "Enter the new Claro database password" -AsSecureString
+    if ($null -eq $securePassword) { throw "Password input was cancelled." }
     $passwordPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
     try {
         $plainPassword = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($passwordPointer)
