@@ -119,6 +119,10 @@ Captures from the running application (`tests/ui/browser_smoke.py --screenshots`
 
 All 15 screens in both themes are in [docs/screenshots/](docs/screenshots/).
 
+## Engineering case study
+
+The editorial web case study lives in [portfolio-site/](portfolio-site/) and is deployed at [claro-portfolio.pages.dev](https://claro-portfolio.pages.dev/). It uses real screenshots and linked evidence, and labels synthetic data, simulated enforcement, retained test results and unavailable infrastructure explicitly.
+
 ## Tech stack
 
 | Technology | Used for | Where |

@@ -1,5 +1,9 @@
 .venv/
 .env
+.env.*
+!.env.example
+!.env.full.example
+.wrangler/
 *.db
 *.sqlite
 *.sqlite3
@@ -12,12 +16,15 @@ dist/
 .ruff_cache/
 .coverage
 htmlcov/
-logs/
-data/
-models/
+/logs/
+/data/
+/models/
 deploy/**/runtime/
 runtime/
 .workbuddy/
+
+# Local raw case-study material; published copies live in portfolio-site/public
+/portfolio/
 
 # Local agent instructions; not part of the published project
 AGENTS.md

@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 580" width="1200" height="580" font-family="Arial, 'Microsoft YaHei', 'PingFang SC', sans-serif">
+  <rect width="1200" height="580" fill="#FFFFFF"/>
+  <text x="48" y="42" font-size="22" font-weight="700" fill="#1A1F2B">模型评估证据 · 为什么 1.0 不是能力证明</text>
+  <text x="48" y="64" font-size="12" fill="#5B6472">数据源：models/risk_ml/&lt;model_id&gt;/metadata.json（evaluation_metrics）+ docs/MODEL_EVALUATION.md。模型：char_wb TF-IDF(1–4gram, 词表 3,114) + OneVsRest LogisticRegression，class_weight=balanced，C=1.0，8 个标签阈值均为 0.20。</text>
+  <text x="48" y="84" font-size="11" fill="#8A5A00">数据集 phase-02-synthetic-s20261125-p5000-m50000，固定 seed=20261125，按玩家哈希切分（70/10/10/10），玩家不跨 train/test。</text>
+
+  <!-- left panel -->
+  <rect x="48" y="102" width="540" height="316" rx="3" fill="#F2F6FA" stroke="#1F4E79" stroke-width="1.2"/>
+  <text x="66" y="128" font-size="14" font-weight="700" fill="#1F4E79">普通 test 集 · 指标全部 1.0</text>
+  <text x="66" y="150" font-size="11" fill="#5B6472">4,290 条非边界样本（含 770 条 boundary 共 5,060 条；boundary 单独统计、不进 P/R）</text>
+
+  <g font-size="12" fill="#1A1F2B">
+    <text x="66" y="180">二分类（是否有风险）</text>
+    <text x="66" y="202">accuracy 1.0　·　precision 1.0　·　recall 1.0　·　F1 1.0</text>
+    <text x="66" y="222" fill="#5B6472">TN 3,733　FP 0　FN 0　TP 557　·　FPR 0.0　FNR 0.0</text>
+    <text x="66" y="250">多标签</text>
+    <text x="66" y="272">micro-F1 1.0　·　macro-F1 1.0　·　weighted-F1 1.0　·　Hamming loss 0.0</text>
+  </g>
+  <line x1="66" y1="290" x2="570" y2="290" stroke="#C9D0DA"/>
+
+  <text x="66" y="312" font-size="12" font-weight="700" fill="#9B2C2C">但泄漏检查结论：玩家级隔离成立，内容级隔离不成立</text>
+  <text x="66" y="334" font-size="11" fill="#5B6472">train 35,232 条（含 boundary）／ test 5,060 条／ 内容哈希与 train 重复 <tspan font-weight="700" fill="#9B2C2C">5,033 条（99.47%）</tspan></text>
+  <rect x="66" y="346" width="480" height="14" rx="2" fill="#E6EAF0"/>
+  <rect x="66" y="346" width="477.5" height="14" rx="2" fill="#9B2C2C"/>
+  <text x="66" y="376" font-size="10" fill="#5B6472">■ 99.47% 内容重复　　■ 0.53% 不重复（27 条）　　玩家重叠 0</text>
+  <text x="66" y="398" font-size="11" fill="#1A1F2B">模型可以记住模板，而不是学习可迁移的表达；1.0 主要反映模板可分性。</text>
+
+  <!-- right panel -->
+  <rect x="604" y="102" width="548" height="316" rx="3" fill="#FFF8F8" stroke="#9B2C2C" stroke-width="1.2"/>
+  <text x="622" y="128" font-size="14" font-weight="700" fill="#9B2C2C">内容完全不重叠子集 · 无法评估泛化</text>
+  <text x="622" y="150" font-size="11" fill="#5B6472">test 中内容哈希未出现在 train 的 27 条消息，单独评估（metadata.json: test.content_disjoint）</text>
+
+  <g font-size="12" fill="#1A1F2B">
+    <text x="622" y="182">消息数 27　·　normal 27 / risk 0（<tspan font-weight="700" fill="#9B2C2C">没有任何风险正例</tspan>）</text>
+    <text x="622" y="206">预测为风险 0　·　tn 27 / fp 0 / fn 0 / tp 0</text>
+    <text x="622" y="236">precision 0.0　·　recall 0.0　·　F1 0.0　·　macro-F1 0.0</text>
+    <text x="622" y="260">accuracy <tspan font-weight="700">1.0</tspan>　·　Hamming loss 0.0</text>
+  </g>
+  <line x1="622" y1="278" x2="1134" y2="278" stroke="#D9B36B"/>
+  <rect x="622" y="290" width="496" height="66" rx="3" fill="#FFF4E0" stroke="#D9B36B"/>
+  <text x="636" y="312" font-size="11" font-weight="700" fill="#8A5A00">读法（MODEL_EVALUATION.md:131-132 原文）</text>
+  <text x="636" y="332" font-size="11" fill="#1A1F2B">accuracy 1.0 在这里没有意义，因为子集没有风险样本；P/R 为 0 也不代表模型很差，</text>
+  <text x="636" y="348" font-size="11" fill="#1A1F2B">而是没有可评估的正例。该子集不能用于估计泛化能力。</text>
+  <text x="622" y="380" font-size="11" fill="#5B6472">同时看 accuracy 1.0 与 F1 0.0，若只取前者会得出完全相反的结论。</text>
+  <text x="622" y="400" font-size="11" fill="#5B6472">metadata.json notice 原文：「do not establish production accuracy」。</text>
+
+  <!-- supplementary signals -->
+  <rect x="48" y="434" width="1104" height="66" rx="3" fill="#F7F9FB" stroke="#C9D0DA"/>
+  <text x="66" y="456" font-size="12" font-weight="700" fill="#1F4E79">旁证</text>
+  <text x="66" y="476" font-size="11" fill="#1A1F2B">阈值网格搜索在 8 个标签上全部落到最低值 0.20（模板数据高度可分，阈值未受困难样本约束）　·　错误案例：false_positive 0 / false_negative 0 / conflicting 64 / borderline 770</text>
+  <text x="66" y="492" font-size="11" fill="#5B6472">边界样本 770 条中被标记风险 16 条（2.08%），平均最大风险概率 0.0304；该统计只说明模型对「讨论、举报、求助」类内容的倾向，不进入 P/R。</text>
+
+  <!-- conclusion -->
+  <rect x="48" y="514" width="1104" height="52" rx="3" fill="#FFFFFF" stroke="#1F4E79" stroke-width="1.2"/>
+  <text x="66" y="534" font-size="11" font-weight="700" fill="#1F4E79">可以声称：</text>
+  <text x="140" y="534" font-size="11" fill="#1A1F2B">训练、序列化、加载、推理、评估、错误案例与泄漏报告全链路可运行且已持久化。</text>
+  <text x="66" y="554" font-size="11" font-weight="700" fill="#9B2C2C">不能声称：</text>
+  <text x="140" y="554" font-size="11" fill="#1A1F2B">生产可用准确率、1.0 可外推到真实玩家聊天、阈值 0.20 在新数据上仍合适、disjoint 的 accuracy 1.0 代表泛化。</text>
+</svg>

@@ -225,10 +225,11 @@ scripts/        PowerShell 安装 / 启动 / 停止 / 测试 / 演示 / 基准
 deploy/         Kafka、Redis、PostgreSQL 原生启动配置
 models/         一份已提交的基线 ML 产物及其元数据
 docs/           架构、决策记录、阶段报告、截图
+portfolio-site/ 独立 Web 工程案例（React / Vite），线上地址 https://claro-portfolio.pages.dev/
 tests/          单元、集成（真实服务）、UI 冒烟
 ```
 
-页面模块放在 `ui/screens/`，不是 `ui/pages/`：后者会触发 Streamlit 自带的多页路由，与显式导航冲突。
+页面模块放在 `ui/screens/`，不是 `ui/pages/`：后者会触发 Streamlit 自带的多页路由，与显式导航冲突。工程案例网站使用真实截图和证据文档，并明确标注合成数据、模拟处置、历史测试结果与未运行基础设施。
 
 ## 验证记录
 

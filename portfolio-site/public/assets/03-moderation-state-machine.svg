@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680" width="1200" height="680" font-family="Arial, 'Microsoft YaHei', 'PingFang SC', sans-serif">
+  <defs>
+    <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1F4E79"/>
+    </marker>
+    <marker id="a3r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8A5A00"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="680" fill="#FFFFFF"/>
+  <text x="48" y="44" font-size="22" font-weight="700" fill="#1A1F2B">审核状态机 · Moderation State Machine</text>
+  <text x="48" y="68" font-size="12" fill="#5B6472">逐条对应 src/claro/governance/moderation.py:24-56 的 CASE_TRANSITIONS 与 :58-65 的 ACTION_TARGET；执行在 repositories/governance_repository.py:review_case()（SELECT ... FOR UPDATE + lock_version 乐观锁）。</text>
+
+  <rect x="48" y="88" width="748" height="520" rx="3" fill="#FBFCFD" stroke="#C9D0DA"/>
+  <text x="66" y="112" font-size="12" font-weight="700" fill="#5B6472">状态迁移图（实线 = 受控动作；橙色虚线 = reopen 回退路径）</text>
+
+  <!-- nodes -->
+  <g font-size="12" text-anchor="middle">
+    <rect x="80" y="160" width="128" height="44" rx="3" fill="#FFFFFF" stroke="#1F4E79" stroke-width="1.4"/>
+    <text x="144" y="187" fill="#1A1F2B" font-weight="700">pending</text>
+    <rect x="80" y="252" width="128" height="44" rx="3" fill="#FFFFFF" stroke="#1F4E79" stroke-width="1.4"/>
+    <text x="144" y="279" fill="#1A1F2B" font-weight="700">open</text>
+
+    <rect x="300" y="206" width="152" height="50" rx="3" fill="#E8F0F8" stroke="#1F4E79" stroke-width="2"/>
+    <text x="376" y="228" fill="#1F4E79" font-weight="700">in_review</text>
+    <text x="376" y="245" font-size="10" fill="#5B6472">审核进行中 · 中心状态</text>
+
+    <rect x="86" y="436" width="140" height="44" rx="3" fill="#FFFFFF" stroke="#C9D0DA"/>
+    <text x="156" y="463" fill="#1A1F2B">escalated</text>
+    <rect x="286" y="436" width="152" height="44" rx="3" fill="#FFFFFF" stroke="#C9D0DA"/>
+    <text x="362" y="463" fill="#1A1F2B">second_review</text>
+
+    <rect x="536" y="140" width="140" height="44" rx="3" fill="#EDF5ED" stroke="#4A7A4A"/>
+    <text x="606" y="167" fill="#1A1F2B">approved</text>
+    <rect x="536" y="214" width="140" height="44" rx="3" fill="#EDF5ED" stroke="#4A7A4A"/>
+    <text x="606" y="241" fill="#1A1F2B">rejected</text>
+    <rect x="536" y="288" width="140" height="44" rx="3" fill="#EDF5ED" stroke="#4A7A4A"/>
+    <text x="606" y="315" fill="#1A1F2B">finalized</text>
+    <rect x="536" y="436" width="140" height="44" rx="3" fill="#EDF5ED" stroke="#4A7A4A"/>
+    <text x="606" y="463" fill="#1A1F2B">resolved</text>
+  </g>
+
+  <!-- arrows -->
+  <g stroke="#1F4E79" stroke-width="1.4" fill="none" marker-end="url(#a3)">
+    <path d="M 208 182 L 296 220"/>
+    <path d="M 208 274 L 296 240"/>
+    <path d="M 452 220 L 532 170"/>
+    <path d="M 452 226 L 532 234"/>
+    <path d="M 452 236 L 532 304"/>
+    <path d="M 380 256 L 216 436"/>
+    <path d="M 430 256 L 380 436"/>
+    <path d="M 226 458 L 282 458"/>
+    <path d="M 438 450 L 532 306"/>
+    <path d="M 438 458 L 532 170"/>
+    <path d="M 438 466 L 532 240"/>
+  </g>
+  <g font-size="10" fill="#5B6472">
+    <text x="222" y="186">claim</text>
+    <text x="222" y="268">claim</text>
+    <text x="466" y="182">approve</text>
+    <text x="466" y="222">reject</text>
+    <text x="462" y="286">override</text>
+    <text x="258" y="356">escalate</text>
+    <text x="392" y="356">2nd review</text>
+    <text x="236" y="450">2nd review</text>
+    <text x="462" y="404">finalize</text>
+    <text x="452" y="424">approve</text>
+    <text x="452" y="478">reject</text>
+  </g>
+
+  <!-- reopen path -->
+  <path d="M 676 160 C 730 160 730 560 480 560 L 376 560 L 376 260" stroke="#8A5A00" stroke-width="1.4" fill="none" stroke-dasharray="5 4" marker-end="url(#a3r)"/>
+  <text x="500" y="552" font-size="11" fill="#8A5A00" font-weight="700">reopen：approved / rejected / finalized / resolved → in_review</text>
+
+  <!-- semantics callout -->
+  <rect x="86" y="524" width="590" height="66" rx="3" fill="#FFF8EA" stroke="#D9B36B"/>
+  <text x="102" y="546" font-size="12" font-weight="700" fill="#8A5A00">语义约束（build_review_outcome, moderation.py:132-164）</text>
+  <text x="102" y="566" font-size="11" fill="#1A1F2B">reject → DecisionAction.ALLOW（「认为不该处置」），不是拦截；拦截必须显式 override，且同时提供 final_action + final_level。</text>
+  <text x="102" y="582" font-size="11" fill="#5B6472">每次迁移写入 moderation_review 的 from_status / to_status、case_event 与 audit_event；reason 至少 3 字符。</text>
+
+  <!-- right: exact transition table -->
+  <rect x="812" y="88" width="340" height="520" rx="3" fill="#F7F9FB" stroke="#C9D0DA"/>
+  <text x="828" y="112" font-size="12" font-weight="700" fill="#1F4E79">CASE_TRANSITIONS（代码原文）</text>
+  <g font-size="11" fill="#1A1F2B">
+    <text x="828" y="140" font-weight="700">pending → in_review</text>
+    <text x="828" y="160" font-weight="700">open → in_review</text>
+    <text x="828" y="186" font-weight="700">in_review →</text>
+    <text x="844" y="204">approved · rejected · escalated</text>
+    <text x="844" y="222">second_review · finalized</text>
+    <text x="828" y="248" font-weight="700">escalated →</text>
+    <text x="844" y="266">in_review · second_review</text>
+    <text x="844" y="284">finalized · rejected</text>
+    <text x="828" y="310" font-weight="700">second_review →</text>
+    <text x="844" y="328">approved · rejected · finalized</text>
+    <text x="844" y="346">in_review</text>
+    <text x="828" y="372" font-weight="700">approved → in_review</text>
+    <text x="828" y="392" font-weight="700">rejected → in_review</text>
+    <text x="828" y="412" font-weight="700">finalized → in_review</text>
+    <text x="828" y="432" font-weight="700">resolved → in_review</text>
+  </g>
+  <line x1="828" y1="450" x2="1136" y2="450" stroke="#C9D0DA"/>
+  <text x="828" y="472" font-size="11" font-weight="700" fill="#5B6472">ACTION_TARGET</text>
+  <g font-size="11" fill="#5B6472">
+    <text x="828" y="492">approve → approved　reject → rejected</text>
+    <text x="828" y="510">override → finalized　escalate → escalated</text>
+    <text x="828" y="528">request_second_review → second_review</text>
+    <text x="828" y="546">reopen → in_review</text>
+  </g>
+  <text x="828" y="578" font-size="11" fill="#5B6472">终态集合：approved / rejected / finalized</text>
+  <text x="828" y="594" font-size="11" fill="#5B6472">可认领：pending / open / escalated /</text>
+  <text x="828" y="610" font-size="11" fill="#5B6472">second_review</text>
+
+  <text x="48" y="636" font-size="11" fill="#5B6472">证据：tests/unit/test_governance_moderation.py（15 个用例）；demo_report.json 步骤 8–9 演示 claim → override → finalized → mute。</text>
+  <text x="48" y="656" font-size="11" fill="#5B6472">限制：身份为模拟（侧栏切换字符串），角色只进审计不参与授权；审核 SLA 字段 due_at 无提醒或自动分派。</text>
+</svg>

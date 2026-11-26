@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900" font-family="Arial, 'Microsoft YaHei', 'PingFang SC', sans-serif">
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1F4E79"/>
+    </marker>
+    <marker id="a2g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7A8B9C"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="900" fill="#FFFFFF"/>
+  <text x="48" y="44" font-size="22" font-weight="700" fill="#1A1F2B">Claro 系统架构 · 分层与基础设施</text>
+  <text x="48" y="68" font-size="12" fill="#5B6472">模块化单体（modular monolith）；依赖组装的唯一入口是 bootstrap.create_app_container()（src/claro/bootstrap.py:115）。</text>
+  <text x="48" y="90" font-size="11" fill="#8A5A00">虚线表示异步事件流，实线表示进程内调用；Hive 分支为 Blocked，见底部说明。</text>
+
+  <!-- LAYER 1 UI -->
+  <rect x="48" y="108" width="1104" height="88" rx="3" fill="#F2F6FA" stroke="#1F4E79" stroke-width="1.2"/>
+  <text x="66" y="132" font-size="13" font-weight="700" fill="#1F4E79">UI　ui/</text>
+  <text x="66" y="154" font-size="12" fill="#1A1F2B">app.py — st.navigation，15 个 screen / 5 组　·　screens/（刻意不叫 pages/，避免触发 Streamlit 自身多页路由）</text>
+  <text x="66" y="174" font-size="12" fill="#1A1F2B">theme.py（明暗 token）　·　charts.py（token 驱动 Plotly）　·　cache.py（纯读，TTL 45 s）　·　common.py</text>
+  <text x="66" y="190" font-size="11" fill="#5B6472">约束：页面不执行 SQL、不持有事务、不含审核核心逻辑；写操作一律走 live service，不经过缓存。</text>
+  <line x1="600" y1="196" x2="600" y2="216" stroke="#1F4E79" stroke-width="1.5" marker-end="url(#a2)"/>
+
+  <!-- LAYER 2 Application -->
+  <rect x="48" y="218" width="1104" height="108" rx="3" fill="#F7F9FB" stroke="#C9D0DA"/>
+  <text x="66" y="242" font-size="13" font-weight="700" fill="#1F4E79">Application　application/</text>
+  <text x="66" y="264" font-size="12" fill="#1A1F2B">ClaroProcessingService（统一入口：validate → ingest → detect → publish → governance，_Stage 计时、四态归集）</text>
+  <text x="66" y="284" font-size="12" fill="#1A1F2B">RiskService　·　GovernancePipelineService　·　PolicyEvaluation / Policy / GovernanceDecision　·　ModerationService</text>
+  <text x="66" y="304" font-size="12" fill="#1A1F2B">EnforcementService　·　FeedbackAuditService　·　AnalyticsService　·　StrategyReplayService　·　OutboxDispatcher　·　DemoService</text>
+  <text x="66" y="320" font-size="11" fill="#5B6472">约束：只做编排与事务边界；通过 ports.py 的 Protocol 依赖注入，development 模式换为内存事件总线。</text>
+  <line x1="330" y1="326" x2="330" y2="346" stroke="#1F4E79" stroke-width="1.5" marker-end="url(#a2)"/>
+  <line x1="870" y1="326" x2="870" y2="346" stroke="#1F4E79" stroke-width="1.5" marker-end="url(#a2)"/>
+
+  <!-- LAYER 3A domain/risk -->
+  <rect x="48" y="348" width="524" height="122" rx="3" fill="#F7F9FB" stroke="#C9D0DA"/>
+  <text x="66" y="372" font-size="13" font-weight="700" fill="#1F4E79">Domain &amp; Risk Intelligence</text>
+  <text x="66" y="392" font-size="11" fill="#5B6472">domain/（枚举、Message / BlacklistEntry 值对象）</text>
+  <text x="66" y="410" font-size="12" fill="#1A1F2B">risk_engine/：preprocessing · rules（22 条） · ml/（TF-IDF + OvR LR）</text>
+  <text x="66" y="428" font-size="12" fill="#1A1F2B">fusion（加权 noisy-OR） · explainability · evaluation · taxonomy（7 域 / 19 类）</text>
+  <text x="66" y="448" font-size="12" fill="#1A1F2B">semantic.py → UnavailableSemanticDetector，返回 None</text>
+  <text x="66" y="464" font-size="11" fill="#9B2C2C">llm.py → 真实 HTTP 适配器，但 enabled=False，仅伪造传输测试过</text>
+
+  <!-- LAYER 3B governance/analytics -->
+  <rect x="588" y="348" width="564" height="122" rx="3" fill="#F7F9FB" stroke="#C9D0DA"/>
+  <text x="606" y="372" font-size="13" font-weight="700" fill="#1F4E79">Governance &amp; Analytics</text>
+  <text x="606" y="392" font-size="11" fill="#5B6472">governance/（纯逻辑，无 IO）</text>
+  <text x="606" y="410" font-size="12" fill="#1A1F2B">policy（声明式白名单 + 快照哈希） · decision（置信度降级）</text>
+  <text x="606" y="428" font-size="12" fill="#1A1F2B">moderation（CASE_TRANSITIONS） · enforcement（simulated=True）</text>
+  <text x="606" y="448" font-size="12" fill="#1A1F2B">analytics/：definitions（phase-05.2） · sql_queries（29 条具名 SQL）</text>
+  <text x="606" y="464" font-size="12" fill="#1A1F2B">metrics（gated_rate，分母 &lt; 30 抑制） · strategy（只读回放） · quality · reports</text>
+  <line x1="330" y1="470" x2="330" y2="490" stroke="#1F4E79" stroke-width="1.5" marker-end="url(#a2)"/>
+  <line x1="870" y1="470" x2="870" y2="490" stroke="#1F4E79" stroke-width="1.5" marker-end="url(#a2)"/>
+
+  <!-- LAYER 4 data access -->
+  <rect x="48" y="492" width="1104" height="98" rx="3" fill="#F7F9FB" stroke="#C9D0DA"/>
+  <text x="66" y="516" font-size="13" font-weight="700" fill="#1F4E79">Data Access　data_access/</text>
+  <text x="66" y="538" font-size="12" fill="#1A1F2B">models.py（32 张 ORM 表）　·　database.py（session_scope 显式事务）　·　7 个 Alembic revision，head = a7c3e91d4f62</text>
+  <text x="66" y="558" font-size="12" fill="#1A1F2B">repositories/：kafka（Inbox + 内容哈希） · risk（幂等保存） · governance（决策/审核/处置/审计/outbox）</text>
+  <text x="66" y="578" font-size="12" fill="#1A1F2B">policy · safety · synthetic（批量装载） · explorer（纯只读参数化 SQL，不持有 Session）</text>
+  <line x1="600" y1="590" x2="600" y2="610" stroke="#1F4E79" stroke-width="1.5" marker-end="url(#a2)"/>
+
+  <!-- LAYER 5 infrastructure -->
+  <rect x="48" y="612" width="1104" height="82" rx="3" fill="#F2F6FA" stroke="#1F4E79" stroke-width="1.2"/>
+  <text x="66" y="636" font-size="13" font-weight="700" fill="#1F4E79">Infrastructure Adapters　infrastructure/</text>
+  <text x="66" y="658" font-size="12" fill="#1A1F2B">kafka.py — KafkaProducer / KafkaConsumer / KafkaEventBus / KafkaAdmin（acks=all、幂等生产、手动提交 offset、retry 3 次、DLQ）</text>
+  <text x="66" y="678" font-size="12" fill="#1A1F2B">redis.py — CachePort / BusinessCachePort（含独立 Lua 原子 INCR+EXPIRE 限流适配器）　·　memory.py　·　logging.py　·　health.py</text>
+
+  <!-- storage boxes -->
+  <g>
+    <rect x="48" y="716" width="256" height="86" rx="3" fill="#FFFFFF" stroke="#1F4E79" stroke-width="1.5"/>
+    <text x="176" y="742" font-size="13" font-weight="700" fill="#1F4E79" text-anchor="middle">PostgreSQL 18.3</text>
+    <text x="176" y="762" font-size="11" fill="#1A1F2B" text-anchor="middle">system of record · 32 张业务表</text>
+    <text x="176" y="780" font-size="11" fill="#5B6472" text-anchor="middle">JSONB / 唯一约束 / 乐观锁 / 审计</text>
+
+    <rect x="320" y="716" width="256" height="86" rx="3" fill="#FFFFFF" stroke="#1F4E79" stroke-width="1.5"/>
+    <text x="448" y="742" font-size="13" font-weight="700" fill="#1F4E79" text-anchor="middle">Kafka 3.9.2 · KRaft</text>
+    <text x="448" y="762" font-size="11" fill="#1A1F2B" text-anchor="middle">6 个内容 topic + 5 个治理 topic</text>
+    <text x="448" y="780" font-size="11" fill="#5B6472" text-anchor="middle">outbox_event → OutboxDispatcher</text>
+
+    <rect x="592" y="716" width="256" height="86" rx="3" fill="#FFFFFF" stroke="#1F4E79" stroke-width="1.5"/>
+    <text x="720" y="742" font-size="13" font-weight="700" fill="#1F4E79" text-anchor="middle">Redis 8.10.3</text>
+    <text x="720" y="762" font-size="11" fill="#1A1F2B" text-anchor="middle">规则/策略缓存 · PG 计数缓存</text>
+    <text x="720" y="780" font-size="11" fill="#5B6472" text-anchor="middle">Lua 限流/黑名单适配器未接主治理</text>
+
+    <rect x="864" y="716" width="288" height="86" rx="3" fill="#FFF7F7" stroke="#9B2C2C" stroke-width="1.2" stroke-dasharray="4 3"/>
+    <text x="1008" y="742" font-size="13" font-weight="700" fill="#9B2C2C" text-anchor="middle">Hive / Hadoop / Beeline</text>
+    <text x="1008" y="762" font-size="11" fill="#9B2C2C" text-anchor="middle">BLOCKED — 未安装，不可执行</text>
+    <text x="1008" y="780" font-size="11" fill="#5B6472" text-anchor="middle">仅 CSV 导出 + ODS/DWD/DWS/ADS SQL</text>
+  </g>
+  <line x1="600" y1="694" x2="600" y2="710" stroke="#1F4E79" stroke-width="1.5" marker-end="url(#a2)"/>
+  <path d="M 176 710 L 176 716 M 448 710 L 448 716 M 720 710 L 720 716 M 1008 710 L 1008 716" stroke="#7A8B9C" stroke-width="1" fill="none" stroke-dasharray="3 3"/>
+  <path d="M 176 710 L 1008 710" stroke="#7A8B9C" stroke-width="1" fill="none" stroke-dasharray="3 3"/>
+
+  <!-- failure handling strip -->
+  <rect x="48" y="820" width="1104" height="66" rx="3" fill="#F7F9FB" stroke="#C9D0DA"/>
+  <text x="66" y="840" font-size="12" font-weight="700" fill="#1A1F2B">失败处理与一致性</text>
+  <text x="66" y="859" font-size="10" fill="#5B6472">三层幂等：inbox_event(event_id + topic/partition/offset + 内容哈希) → risk_result.message_id → 治理幂等键；Outbox 同事务限于 decision / moderation / enforcement，evaluation 提交后入队。</text>
+  <text x="66" y="876" font-size="10" fill="#5B6472">offset 仅在成功或 retry/DLQ 路由成功后提交；outbox 耗尽停在 status=failed，无 DLQ（README 表述不一致，详见证据报告 C5）。</text>
+</svg>

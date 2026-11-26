@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" width="1200" height="760" font-family="Arial, 'Microsoft YaHei', 'PingFang SC', sans-serif">
+  <defs>
+    <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1F4E79"/>
+    </marker>
+    <marker id="a4r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9B2C2C"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="760" fill="#FFFFFF"/>
+  <text x="48" y="44" font-size="22" font-weight="700" fill="#1A1F2B">Kafka 消息流 · Outbox · 三层幂等</text>
+  <text x="48" y="68" font-size="12" fill="#5B6472">topic 名来自 config/settings.py:42-47, 114-128 与 infrastructure/kafka.py:52-68；event_type 常量来自 application/message_events.py / risk_events.py。</text>
+  <text x="48" y="88" font-size="11" fill="#8A5A00">注意：topic 名与 event_type 名是两套命名，文档中曾混用（如 game.risk.assessed.v1 是 event_type，不是 topic）。</text>
+
+  <!-- PATH A -->
+  <rect x="48" y="106" width="1104" height="152" rx="3" fill="#F2F6FA" stroke="#1F4E79" stroke-width="1.2"/>
+  <text x="66" y="130" font-size="13" font-weight="700" fill="#1F4E79">路径 A · 统一入口（CLI / demo-run / benchmark 走这条）</text>
+  <g font-size="11" text-anchor="middle">
+    <rect x="70" y="150" width="170" height="60" rx="3" fill="#FFFFFF" stroke="#C9D0DA"/>
+    <text x="155" y="172" fill="#1A1F2B" font-weight="700">RawGameMessagePayload</text>
+    <text x="155" y="190" fill="#5B6472">pydantic strict / extra=forbid</text>
+    <text x="155" y="204" fill="#5B6472">verify_content_hash</text>
+
+    <rect x="270" y="150" width="190" height="60" rx="3" fill="#FFFFFF" stroke="#C9D0DA"/>
+    <text x="365" y="172" fill="#1A1F2B" font-weight="700">ingest（同事务）</text>
+    <text x="365" y="190" fill="#5B6472">message + inbox_event</text>
+    <text x="365" y="204" fill="#5B6472">+ processing_event + audit_event</text>
+
+    <rect x="490" y="150" width="170" height="60" rx="3" fill="#FFFFFF" stroke="#C9D0DA"/>
+    <text x="575" y="172" fill="#1A1F2B" font-weight="700">detect</text>
+    <text x="575" y="190" fill="#5B6472">rules + ML + fusion</text>
+    <text x="575" y="204" fill="#5B6472">→ risk_result / risk_finding</text>
+
+    <rect x="690" y="150" width="170" height="60" rx="3" fill="#FFFFFF" stroke="#C9D0DA"/>
+    <text x="775" y="172" fill="#1A1F2B" font-weight="700">publish</text>
+    <text x="775" y="190" fill="#1F4E79">game.risk.events</text>
+    <text x="775" y="204" fill="#5B6472">event_type=</text>
+    <text x="775" y="217" fill="#5B6472">game.risk.assessed.v1</text>
+
+    <rect x="890" y="150" width="234" height="60" rx="3" fill="#FFFFFF" stroke="#C9D0DA"/>
+    <text x="1007" y="172" fill="#1A1F2B" font-weight="700">governance（进程内直接调用）</text>
+    <text x="1007" y="190" fill="#5B6472">evaluate → decide → enforce</text>
+    <text x="1007" y="204" fill="#5B6472">不等待 Kafka 消费者回调</text>
+  </g>
+  <g stroke="#1F4E79" stroke-width="1.4" fill="none" marker-end="url(#a4)">
+    <path d="M 240 180 L 266 180"/><path d="M 460 180 L 486 180"/><path d="M 660 180 L 686 180"/><path d="M 860 180 L 886 180"/>
+  </g>
+  <text x="70" y="240" font-size="11" fill="#8A5A00">代码事实：processing_service.py:263 发布事件后，:289 立即在同一进程调用 GovernancePipelineService.handle()；「单条处理与 Kafka 消费共用同一套下游逻辑」不等于同一条调用路径。</text>
+
+  <!-- PATH B -->
+  <rect x="48" y="272" width="1104" height="146" rx="3" fill="#FBFCFD" stroke="#C9D0DA"/>
+  <text x="66" y="296" font-size="13" font-weight="700" fill="#1F4E79">路径 B · Kafka 消费链（三个独立 CLI 消费者，cli.py:435 / :606 / :799）</text>
+  <g font-size="11" text-anchor="middle">
+    <rect x="70" y="314" width="188" height="58" rx="3" fill="#FFFFFF" stroke="#C9D0DA"/>
+    <text x="164" y="336" fill="#1A1F2B" font-weight="700">game.messages.raw</text>
+    <text x="164" y="354" fill="#5B6472">kafka-consume --persist</text>
+    <text x="164" y="368" fill="#5B6472">→ KafkaIngestionService</text>
+
+    <rect x="288" y="314" width="188" height="58" rx="3" fill="#FFFFFF" stroke="#C9D0DA"/>
+    <text x="382" y="336" fill="#1A1F2B" font-weight="700">game.messages.processed</text>
+    <text x="382" y="354" fill="#5B6472">risk-pipeline</text>
+    <text x="382" y="368" fill="#5B6472">→ RiskPipelineService</text>
+
+    <rect x="506" y="314" width="188" height="58" rx="3" fill="#FFFFFF" stroke="#C9D0DA"/>
+    <text x="600" y="336" fill="#1A1F2B" font-weight="700">game.risk.events</text>
+    <text x="600" y="354" fill="#5B6472">governance-pipeline</text>
+    <text x="600" y="368" fill="#5B6472">→ GovernancePipelineService</text>
+
+    <rect x="724" y="314" width="196" height="58" rx="3" fill="#FFFFFF" stroke="#C9D0DA"/>
+    <text x="822" y="336" fill="#1A1F2B" font-weight="700">outbox_event</text>
+    <text x="822" y="354" fill="#5B6472">选定治理写入同事务</text>
+    <text x="822" y="368" fill="#5B6472">dedupe_key 唯一约束</text>
+
+    <rect x="950" y="314" width="174" height="58" rx="3" fill="#FFFFFF" stroke="#C9D0DA"/>
+    <text x="1037" y="336" fill="#1A1F2B" font-weight="700">game.governance.*</text>
+    <text x="1037" y="354" fill="#5B6472">5 个 topic，由 dispatcher 发布</text>
+    <text x="1037" y="368" fill="#9B2C2C">仓库内无下游消费者</text>
+  </g>
+  <g stroke="#1F4E79" stroke-width="1.4" fill="none" marker-end="url(#a4)">
+    <path d="M 258 343 L 284 343"/><path d="M 476 343 L 502 343"/><path d="M 694 343 L 720 343"/><path d="M 920 343 L 946 343"/>
+  </g>
+  <text x="70" y="398" font-size="11" fill="#5B6472">OutboxDispatcher.dispatch_once()：成功 → mark_outbox_published；异常 → mark_outbox_failed（attempts+1，available_at +30 s）。max_attempts=5；evaluation 在评估提交后入队。</text>
+
+  <!-- failure branch -->
+  <rect x="48" y="432" width="1104" height="92" rx="3" fill="#FFF8F8" stroke="#9B2C2C" stroke-width="1"/>
+  <text x="66" y="454" font-size="12" font-weight="700" fill="#9B2C2C">失败处理（infrastructure/kafka.py:597-641）</text>
+  <text x="66" y="474" font-size="11" fill="#1A1F2B">enable.auto.commit=False / auto.offset.store=False；仅在业务事务成功、确认重复、或 retry / DLQ 路由成功后同步提交 offset。</text>
+  <text x="66" y="492" font-size="11" fill="#1A1F2B">可重试失败 → game.messages.retry（携带 x-claro-retry-count 等 header，max_retries=3）；永久错误或重试耗尽 → game.messages.dead-letter。</text>
+  <text x="66" y="510" font-size="11" fill="#9B2C2C">边界：outbox 尝试耗尽后停在 status='failed'，不自动进入 DLQ；Kafka consumer 的 DLQ 与 Outbox 失败是两条不同路径。</text>
+
+  <!-- idempotency table -->
+  <rect x="48" y="538" width="1104" height="146" rx="3" fill="#F7F9FB" stroke="#C9D0DA"/>
+  <text x="66" y="562" font-size="13" font-weight="700" fill="#1F4E79">三层幂等键（全部在代码中落地，非设计稿）</text>
+  <line x1="66" y1="572" x2="1134" y2="572" stroke="#C9D0DA"/>
+  <g font-size="11" fill="#1A1F2B">
+    <text x="66" y="592" font-weight="700" fill="#5B6472">层</text>
+    <text x="186" y="592" font-weight="700" fill="#5B6472">键 / 约束</text>
+    <text x="576" y="592" font-weight="700" fill="#5B6472">代码位置</text>
+    <text x="870" y="592" font-weight="700" fill="#5B6472">吸收的重放场景</text>
+
+    <text x="66" y="616" font-weight="700">① 入库</text>
+    <text x="186" y="616">inbox_event.event_id（主键）+ uq_inbox_event_source(topic,partition,offset) + SHA-256 内容哈希</text>
+    <text x="576" y="616">kafka_repository.py:92-113, 303-305</text>
+    <text x="870" y="616">Kafka 重复投递、payload 被复用</text>
+
+    <text x="66" y="640" font-weight="700">② 检测</text>
+    <text x="186" y="640">uq_risk_result_message_id；detect() 先查已有结果，IntegrityError 兜底</text>
+    <text x="576" y="640">risk_service.py:158-162 · risk_repository.py:183-237</text>
+    <text x="870" y="640">同一消息重复检测</text>
+
+    <text x="66" y="664" font-weight="700">③ 治理</text>
+    <text x="186" y="664">policy_evaluation(message_id, policy_snapshot_hash) + decision_key + enforcement idempotency_key</text>
+    <text x="576" y="664">governance_repository.py:204-211, 330-334 · enforcement_service.py:55</text>
+    <text x="870" y="664">重复裁决、重复处置</text>
+  </g>
+  <text x="66" y="680" font-size="10" fill="#5B6472">直接路径 stable_envelope 使用完整 payload，当前包含 occurred_at；注释声称排除发送时间，与实现不一致。Kafka 入口也对完整 envelope 求哈希。</text>
+
+  <text x="48" y="712" font-size="11" fill="#5B6472">事件契约：EventEnvelope（event_id / event_type / schema_version=1 / occurred_at / trace_id / payload），encode_event 强制校验 6 个必需字段（application/message_events.py:148-183）。</text>
+  <text x="48" y="732" font-size="11" fill="#5B6472">治理 topic 清单：game.governance.evaluated.v1 / decisions.v1 / moderation.v1 / enforcement.v1 / feedback.v1（settings.py:114-128）。</text>
+  <text x="48" y="752" font-size="11" fill="#5B6472">验证：tests/integration/test_kafka.py、test_governance_kafka.py、test_phase02_pipeline.py；第二次 demo 全 duplicate 仅见 Phase 06 文档，未保留第二次原始 JSON。</text>
+</svg>
